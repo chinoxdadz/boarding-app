@@ -49,6 +49,27 @@ h3 { font-size: clamp(0.95rem, 2.6vw, 1rem); }
     background: linear-gradient(135deg, var(--primary), var(--primary-dark));
 }
 
+/* === Admin Login Screen === */
+#admin-login {
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+}
+
+/* === Admin Dashboard === */
+#admin-dash {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1.5rem 1rem;
+}
+#admin-dash > * {
+    width: 100%;
+    max-width: 900px;
+}
+
 .login-card {
     background: white;
     padding: clamp(1rem, 2.5vw, 2rem);
@@ -90,6 +111,33 @@ input, select, textarea {
     font-weight: 600;
 }
 .error-msg { color: var(--danger); margin-top: 0.5rem; font-size: 0.9rem; }
+
+/* Admin-specific styles */
+.admin-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin-bottom: 1.5rem;
+}
+.admin-header h2 { margin: 0; }
+.btn-logout {
+    background: var(--danger);
+    color: white;
+    border: none;
+    padding: 0.6rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.btn-logout:hover { opacity: 0.9; }
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin: 1rem 0;
+}
 
 /* === Cards === */
 .card {
