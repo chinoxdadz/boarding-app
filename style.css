@@ -268,3 +268,29 @@ input, select, textarea {
     .mobile-nav .label { display: none; }
     .nav-item .icon { font-size: 1.3rem; }
 }
+
+/* === Footer === */
+.site-footer {
+    background: white;
+    border-top: 1px solid var(--border);
+    margin-top: 2rem;
+}
+.footer-content {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    padding: 1rem 1rem 2rem;
+}
+.footer-links {
+    display: flex;
+    gap: 1rem;
+}
+.footer-links a {
+    color: var(--text-muted);
+    text-decoration: none;
+}
+.footer-links a:hover { color: var(--primary); }
