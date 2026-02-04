@@ -1,108 +1,241 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Panel - Boarding House</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Boarding House App</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
-    <section id="admin-login" class="active-screen">
-        <div class="login-card">
-            <h1>Admin Access</h1>
-            <input type="password" id="admin-pass" placeholder="Admin Password" class="full-width">
-            <button onclick="adminApp.login()" class="btn-primary full-width" style="margin-top: 1rem;">Enter</button>
-        </div>
-    </section>
+  <!-- TENANT LOGIN (keep IDs so app.js keeps working) -->
+  <section id="login-screen" class="active-screen">
+    <div class="login-card">
+      <h1>Welcome Home</h1>
+      <p>Tenant Portal</p>
 
-    <section id="admin-dash" class="hidden max-container">
-        <div class="admin-header">
-            <h2>Manager Dashboard</h2>
-            <button onclick="location.reload()" class="btn-logout">Logout</button>
+      <form id="login-form">
+        <div class="form-group">
+          <label>Room Number</label>
+          <input type="text" id="login-room" placeholder="e.g. 101" required />
         </div>
-
-        <div class="card" style="margin-bottom: 20px;">
-            <h3>📢 Post Announcement</h3>
-            <input type="text" id="news-title" placeholder="Title (e.g., Water Interruption)" class="full-width">
-            <textarea id="news-body" placeholder="Details..." style="width:100%; height:80px; padding:8px; margin: 10px 0; border: 1px solid var(--border); border-radius: 8px;"></textarea>
-            <button onclick="adminApp.postNews()" class="btn-primary full-width">Post News</button>
+        <div class="form-group">
+          <label>PIN Code</label>
+          <input type="password" id="login-pin" placeholder="****" required />
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 20px;">
-            <div class="card">
-                <h3>🧾 Create Bill / SOA</h3>
-                <div class="form-grid">
-                    <select id="bill-room" onchange="adminApp.fetchReadings()" style="width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; font-size:1rem;">
-                        <option value="">Select Room</option>
-                    </select>
-                    <input type="month" id="bill-month" onchange="adminApp.fetchReadings()">
-                    <input type="number" id="bill-rental" placeholder="Rental Cost">
-                    <input type="number" id="bill-water-reading" placeholder="Water Reading (m³)" readonly style="background-color: #f5f5f5; cursor: not-allowed;">
-                    <input type="number" id="bill-electric-reading" placeholder="Electric Reading (kWh)" readonly style="background-color: #f5f5f5; cursor: not-allowed;">
-                    <input type="text" id="bill-due" placeholder="Due Date (e.g. Feb 15)">
+        <button type="submit" class="btn-primary full-width">Login</button>
+        <div id="login-error" class="error-msg"></div>
+      </form>
+
+      <div style="margin-top: 2rem; border-top: 1px solid #eee; padding-top: 1rem;">
+        <a href="admin.html" style="color: #ccc; text-decoration: none; font-size: 0.8rem;">
+          🔒 Admin Access
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- TENANT APP (restructured to match admin.html layout) -->
+  <section id="app-container" class="hidden">
+    <!-- Sidebar -->
+    <div class="admin-sidebar tenant-sidebar">
+      <div class="sidebar-header">
+        <h2>🏠 Tenant</h2>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-label">CORE</div>
+
+        <a href="#" onclick="app.nav('home'); return false;" class="nav-link active" data-view="home">
+          <span class="nav-icon">🏠</span> Dashboard
+        </a>
+
+        <a href="#" onclick="app.nav('announcements'); return false;" class="nav-link" data-view="announcements">
+          <span class="nav-icon">📢</span> Announcements
+        </a>
+
+        <a href="#" onclick="app.nav('tickets'); return false;" class="nav-link" data-view="tickets">
+          <span class="nav-icon">🎫</span> Tickets
+        </a>
+
+        <a href="#" onclick="app.nav('billing'); return false;" class="nav-link" data-view="billing">
+          <span class="nav-icon">🧾</span> Billing
+        </a>
+
+        <div class="nav-label" style="margin-top: 1.5rem;">SECONDARY</div>
+
+        <a href="#" onclick="alert('Profile coming soon'); return false;" class="nav-link">
+          <span class="nav-icon">👤</span> Profile
+        </a>
+
+        <a href="#" onclick="alert('Help coming soon'); return false;" class="nav-link">
+          <span class="nav-icon">❓</span> Help
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button onclick="app.logout()" class="btn-logout full-width">Logout</button>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="admin-content tenant-content">
+      <div class="admin-header tenant-header">
+        <h2 id="tenant-page-title">Dashboard</h2>
+        <!-- Optional: keep space for later filters/search -->
+      </div>
+
+      <main>
+        <!-- IMPORTANT: keep the same view IDs + classes so app.js still works -->
+        <section id="home-view" class="view-section">
+          <div class="home-grid">
+            <div class="home-main">
+              <div class="card">
+                <h3>📢 Latest Announcements</h3>
+                <div id="home-announcements-list" class="list-container">
+                  <p class="loading-text">Loading...</p>
                 </div>
-                <button onclick="adminApp.createBill()" class="btn-primary full-width" style="margin-top:10px;">Calculate & Send Bill</button>
+                <button class="btn-text" onclick="app.nav('announcements')">View All</button>
+              </div>
             </div>
 
-            <div class="card">
-                <h3>👥 Tenants</h3>
-                <div class="tenants-table-container">
-                    <table class="tenants-table">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Room No</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tenants-tbody">
-                            <tr>
-                                <td colspan="2" style="text-align:center; color:var(--text-muted);">Loading...</td>
-                            </tr>
-                        </tbody>
-                    </table>
+            <div class="home-sidebar">
+              <div class="card highlight-card">
+                <h3>⚡ Latest Bill</h3>
+                <div id="home-soa-summary">
+                  <p class="loading-text">Checking...</p>
                 </div>
-            </div>
-        </div>
+                <button class="btn-secondary full-width" onclick="app.nav('billing')">View Details</button>
+              </div>
 
-        <div class="card" style="margin-bottom: 20px;">
-            <h3>📊 Monthly Meter Readings</h3>
-            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Input meter readings for each room</p>
-            <div class="readings-table-container">
-                <table class="readings-table">
-                    <thead>
-                        <tr>
-                            <th>Room No</th>
-                            <th>Water (m³)</th>
-                            <th>Electric (kWh)</th>
-                            <th>Date</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="readings-tbody">
-                        <tr>
-                            <td><input type="text" placeholder="101" class="reading-input"></td>
-                            <td><input type="number" placeholder="0.00" class="reading-input"></td>
-                            <td><input type="number" placeholder="0.00" class="reading-input"></td>
-                            <td><input type="date" class="reading-input"></td>
-                            <td><button onclick="adminApp.saveReading(this)" class="btn-small">Save</button></td>
-                        </tr>
-                    </tbody>
-                </table>
+              <div class="card quick-actions">
+                <h3>Quick Actions</h3>
+                <div class="action-grid">
+                  <button class="action-btn" onclick="app.nav('tickets')">Report Issue</button>
+                  <button class="action-btn" onclick="app.nav('billing')">History</button>
+                </div>
+              </div>
             </div>
-            <button onclick="adminApp.addReadingRow()" class="btn-secondary" style="margin-top:1rem; width:100%;">+ Add Row</button>
-        </div>
+          </div>
+        </section>
 
-        <div class="card">
-            <h3>🎫 Open Tickets</h3>
-            <div id="admin-tickets-list">
-                <p>Loading tickets...</p>
-            </div>
-        </div>
-    </section>
+        <section id="announcements-view" class="view-section hidden">
+          <h2>Announcements</h2>
+          <div id="all-announcements-list" class="card-grid"></div>
+        </section>
 
-    <script src="admin.js"></script>
+        <section id="tickets-view" class="view-section hidden">
+          <h2>Support Tickets</h2>
+
+          <div class="card form-card">
+            <h3>Submit New Ticket</h3>
+            <form id="ticket-form">
+              <div class="form-group">
+                <label>Category</label>
+                <select id="ticket-category">
+                  <option value="maintenance">Maintenance</option>
+                  <option value="wifi">Internet/WiFi</option>
+                  <option value="billing">Billing Inquiry</option>
+                  <option value="noise">Noise Complaint</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Message</label>
+                <textarea id="ticket-message" rows="3" placeholder="Describe your issue..." required></textarea>
+              </div>
+
+              <button type="submit" class="btn-primary">Submit Ticket</button>
+            </form>
+          </div>
+
+          <h3 class="mt-large">My Ticket History</h3>
+          <div id="tickets-list" class="card-grid"></div>
+        </section>
+
+        <section id="billing-view" class="view-section hidden">
+          <h2>Billing Statements</h2>
+          <div id="billing-list" class="card-grid"></div>
+        </section>
+      </main>
+
+      <!-- Keep the mobile nav if your CSS/JS expects it. On desktop, sidebar dominates. -->
+      <nav class="mobile-nav">
+        <button class="nav-item" onclick="app.nav('home')">
+          <span class="icon">🏠</span>
+          <span class="label">Home</span>
+        </button>
+        <button class="nav-item" onclick="app.nav('announcements')">
+          <span class="icon">📢</span>
+          <span class="label">News</span>
+        </button>
+        <button class="nav-item" onclick="app.nav('tickets')">
+          <span class="icon">🎫</span>
+          <span class="label">Tickets</span>
+        </button>
+        <button class="nav-item" onclick="app.nav('billing')">
+          <span class="icon">🧾</span>
+          <span class="label">Billing</span>
+        </button>
+      </nav>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="max-container footer-content">
+      <span>© 2026 Chinoxdadz. All rights reserved.</span>
+      <div class="footer-links">
+        <a href="terms.html">Terms</a>
+        <a href="LICENSE">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Keeps the tenant top title synced with the current view,
+    // without touching your existing app.js logic.
+    (function () {
+      const titleEl = document.getElementById('tenant-page-title');
+      if (!titleEl) return;
+
+      const map = {
+        home: 'Dashboard',
+        announcements: 'Announcements',
+        tickets: 'Tickets',
+        billing: 'Billing'
+      };
+
+      // Wrap app.nav if it exists so title + sidebar active state updates
+      const wait = setInterval(() => {
+        if (!window.app || typeof window.app.nav !== 'function') return;
+        clearInterval(wait);
+
+        const originalNav = window.app.nav.bind(window.app);
+        window.app.nav = function(viewName) {
+          // run original navigation
+          const res = originalNav(viewName);
+
+          // update title
+          titleEl.textContent = map[viewName] || 'Dashboard';
+
+          // update active link in sidebar
+          document.querySelectorAll('#app-container .sidebar-nav .nav-link').forEach(a => {
+            a.classList.toggle('active', a.getAttribute('data-view') === viewName);
+          });
+
+          return res;
+        };
+      }, 50);
+      setTimeout(() => clearInterval(wait), 5000);
+    })();
+  </script>
+
+  <script src="app.js"></script>
 </body>
 </html>

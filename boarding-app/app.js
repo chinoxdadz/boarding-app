@@ -131,13 +131,16 @@ const app = {
                 const data = doc.data();
                 const date = formatDate(data.createdAt);
                 html += `
-                    <div style="border-bottom: 1px solid #eee; padding: 10px 0;">
-                        <small style="color:#666">${date}</small>
-                        <h4 style="margin: 4px 0;">${data.title}</h4>
+                    <div class="announcement-card">
+                        <div class="announcement-meta">
+                            <small>${date}</small>
+                        </div>
+                        <h4>${data.title}</h4>
+                        <p>${data.body}</p>
                     </div>
                 `;
             });
-            container.innerHTML = html || '<p>No new announcements.</p>';
+            container.innerHTML = html || '<p class="loading-text">No new announcements.</p>';
         } catch (e) { 
             console.error("News Error:", e);
             container.innerHTML = '<p>Error loading news.</p>'; 
@@ -158,9 +161,9 @@ const app = {
                 const safeAmount = (data.totalAmount || 0);
 
                 soaContainer.innerHTML = `
-                    <div style="text-align:center; padding: 10px;">
-                        <p style="font-size: 0.9rem">Due: ${data.dueDate || 'N/A'}</p>
-                        <h1 style="font-size: 2.5rem; color: var(--primary)">${safeAmount.toFixed(2)}</h1>
+                    <div style="text-align:center; padding: 0.75rem 0;">
+                        <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0 0 0.5rem 0; text-transform: uppercase; font-weight: 600;">Due: ${data.dueDate || 'N/A'}</p>
+                        <h1 style="font-size: 2rem; color: var(--primary); margin: 0 0 0.5rem 0; font-weight: 700;">₱${safeAmount.toFixed(2)}</h1>
                         <span class="status-badge status-${safeStatus.toLowerCase()}">${safeStatus}</span>
                     </div>
                 `;
@@ -187,14 +190,16 @@ const app = {
                 const data = doc.data();
                 const date = formatDate(data.createdAt);
                 html += `
-                    <div class="card">
-                        <small class="status-badge" style="background:#e5e7eb; color:#333;">${date}</small>
-                        <h3 class="mt-large">${data.title}</h3>
-                        <p style="margin-top:0.5rem; color:#4b5563;">${data.body}</p>
+                    <div class="announcement-card">
+                        <div class="announcement-meta">
+                            <small>${date}</small>
+                        </div>
+                        <h4>${data.title}</h4>
+                        <p>${data.body}</p>
                     </div>
                 `;
             });
-            container.innerHTML = html || '<p>No announcements found.</p>';
+            container.innerHTML = html || '<p class="loading-text">No announcements found.</p>';
         } catch(e) {
             console.error(e);
             container.innerHTML = "<p>Error loading data.</p>";
@@ -217,17 +222,19 @@ const app = {
                 const data = doc.data();
                 const date = formatDate(data.createdAt);
                 html += `
-                    <div class="card">
-                        <div style="display:flex; justify-content:space-between;">
-                            <strong>${data.category.toUpperCase()}</strong>
+                    <div class="ticket-card">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                            <h4 style="margin:0;">${data.category.toUpperCase()}</h4>
                             <span class="status-badge status-${data.status}">${data.status}</span>
                         </div>
-                        <p style="margin-top: 10px;">${data.message}</p>
-                        <small style="color:gray; display:block; margin-top:10px">Submitted: ${date}</small>
+                        <p>${data.message}</p>
+                        <div class="ticket-meta">
+                            <small>Submitted: ${date}</small>
+                        </div>
                     </div>
                 `;
             });
-            container.innerHTML = html || '<p>You haven\'t submitted any tickets.</p>';
+            container.innerHTML = html || '<p class="loading-text">You haven\'t submitted any tickets.</p>';
         } catch(e) {
             console.error(e);
             container.innerHTML = "<p>Error loading tickets.</p>";
@@ -286,30 +293,31 @@ const app = {
                 const electric = data.electricAmount || data.electricalAmount || 0;
 
                 html += `
-                    <div class="card">
-                        <div style="display:flex; justify-content:space-between; align-items:center">
-                            <h3>Month: ${data.month || 'N/A'}</h3>
+                    <div class="soa-card">
+                        <div class="soa-header">
+                            <h4 class="soa-month">Month: ${data.month || 'N/A'}</h4>
                             <span class="status-badge status-${safeStatus.toLowerCase()}">${safeStatus}</span>
                         </div>
-                        <hr style="margin: 10px 0; border:0; border-top:1px solid #eee;">
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                            <div>
-                                <small>Water</small>
-                                <div>${data.waterAmount || 0}</div>
+                        <div class="soa-details">
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:0.75rem;">
+                                <div>
+                                    <small style="color: var(--text-muted); font-size: 0.75rem;">Water</small>
+                                    <div style="font-weight: 600;">₱${(data.waterAmount || 0).toFixed(2)}</div>
+                                </div>
+                                <div>
+                                    <small style="color: var(--text-muted); font-size: 0.75rem;">Electricity</small>
+                                    <div style="font-weight: 600;">₱${electric.toFixed(2)}</div>
+                                </div>
                             </div>
-                            <div>
-                                <small>Electricity</small>
-                                <div>${electric}</div>
-                            </div>
+                            <div style="font-size: 0.8rem; color: var(--danger); font-weight: 600;">Due: ${data.dueDate || 'N/A'}</div>
                         </div>
-                        <div style="margin-top:15px; background:#f9fafb; padding:10px; border-radius:5px;">
-                            <strong>Total: ${safeTotal.toFixed(2)}</strong>
-                            <div style="font-size:0.8rem; color:red">Due: ${data.dueDate || 'N/A'}</div>
+                        <div class="soa-total">
+                            Total: ₱${safeTotal.toFixed(2)}
                         </div>
                     </div>
                 `;
             });
-            container.innerHTML = html || '<p>No billing history found.</p>';
+            container.innerHTML = html || '<p class="loading-text">No billing history found.</p>';
         } catch(e) {
             console.error("Billing List Error:", e);
             container.innerHTML = "<p>Error loading bills.</p>";
