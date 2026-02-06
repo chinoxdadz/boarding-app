@@ -35,12 +35,33 @@ const app = {
     
     // Initialize App
     init: () => {
+        app.applyTheme();
         const storedUser = localStorage.getItem('bh_tenant');
         if (storedUser) {
             app.user = JSON.parse(storedUser);
             app.showApp();
         } else {
             app.showLogin();
+        }
+    },
+
+    applyTheme: () => {
+        const theme = localStorage.getItem('bh_theme') || 'dark';
+        document.body.classList.toggle('theme-light', theme === 'light');
+        app.updateThemeButton(theme);
+    },
+
+    toggleTheme: () => {
+        const isLight = document.body.classList.contains('theme-light');
+        const next = isLight ? 'dark' : 'light';
+        localStorage.setItem('bh_theme', next);
+        app.applyTheme();
+    },
+
+    updateThemeButton: (theme) => {
+        const btn = document.getElementById('tenant-theme-toggle');
+        if (btn) {
+            btn.textContent = theme === 'light' ? 'Dark Mode' : 'Light Mode';
         }
     },
 

@@ -14,6 +14,31 @@
     --shadow-sm: 0 0.125rem 0.25rem 0 rgba(0, 0, 0, 0.3);
 }
 
+body.theme-light {
+    --primary: #4e73df;
+    --primary-dark: #2e59d9;
+    --bg-color: #f8f9fc;
+    --card-bg: #ffffff;
+    --text-main: #5a5c69;
+    --text-muted: #858796;
+    --border: #e3e6f0;
+    --success: #1cc88a;
+    --warning: #f6c23e;
+    --danger: #e74a3b;
+    --info: #36b9cc;
+    --shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15);
+    --shadow-sm: 0 0.125rem 0.25rem 0 rgba(58, 59, 69, 0.2);
+}
+
+body.theme-light {
+    background-image:
+        radial-gradient(600px 320px at 10% -10%, rgba(78, 115, 223, 0.14), transparent 60%),
+        radial-gradient(520px 260px at 90% 10%, rgba(54, 185, 204, 0.12), transparent 60%),
+        radial-gradient(420px 240px at 85% 90%, rgba(28, 200, 138, 0.10), transparent 60%),
+        linear-gradient(rgba(90, 92, 105, 0.12) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(90, 92, 105, 0.12) 1px, transparent 1px);
+}
+
 /* Fluid base font for responsive scaling - Mobile First */
 html { 
     font-size: 14px;
@@ -355,6 +380,10 @@ h3 {
 
 .tenant-header {
     margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
 }
 
 .tenant-header h2 {
@@ -383,6 +412,10 @@ h3 {
 
 .admin-header {
     margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
 }
 
 .admin-header h2 {
@@ -390,6 +423,20 @@ h3 {
     font-size: 1.75rem;
     font-weight: 700;
     color: var(--text-main);
+}
+
+.theme-toggle {
+    padding: 0.4rem 0.85rem;
+    font-size: 0.75rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .theme-toggle {
+        padding: 0.35rem 0.7rem;
+        font-size: 0.7rem;
+    }
 }
 
 /* Admin Views */

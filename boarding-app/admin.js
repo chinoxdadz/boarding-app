@@ -30,6 +30,26 @@ const adminApp = {
             .replace(/\s+/g, '')
             .toLowerCase();
     },
+
+    applyTheme: () => {
+        const theme = localStorage.getItem('bh_theme') || 'dark';
+        document.body.classList.toggle('theme-light', theme === 'light');
+        adminApp.updateThemeButton(theme);
+    },
+
+    toggleTheme: () => {
+        const isLight = document.body.classList.contains('theme-light');
+        const next = isLight ? 'dark' : 'light';
+        localStorage.setItem('bh_theme', next);
+        adminApp.applyTheme();
+    },
+
+    updateThemeButton: (theme) => {
+        const btn = document.getElementById('admin-theme-toggle');
+        if (btn) {
+            btn.textContent = theme === 'light' ? 'Dark Mode' : 'Light Mode';
+        }
+    },
     
     login: () => {
         const pass = document.getElementById('admin-pass').value;
@@ -1246,3 +1266,5 @@ const adminApp = {
         }
     }
 };
+
+document.addEventListener('DOMContentLoaded', adminApp.applyTheme);
