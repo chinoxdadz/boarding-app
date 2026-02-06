@@ -10,6 +10,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="security.js"></script>
+    <script src="receipt.js"></script>
 </head>
 <body>
 
@@ -39,20 +40,42 @@
 
     <div id="app-container" class="hidden">
         
-        <header class="desktop-header">
-            <div class="max-container header-content">
-                <div class="logo">🏠 BoardingHouse</div>
-                <nav class="desktop-nav">
-                    <a href="#" onclick="app.nav('home')">Dashboard</a>
-                    <a href="#" onclick="app.nav('announcements')">Announcements</a>
-                    <a href="#" onclick="app.nav('tickets')">Tickets</a>
-                    <a href="#" onclick="app.nav('billing')">Billing</a>
-                    <a href="#" onclick="app.logout()" class="logout-link">Logout</a>
-                </nav>
+        <!-- Sidebar Navigation -->
+        <div class="tenant-sidebar">
+            <div class="sidebar-header">
+                <h2>🏠 BHouse</h2>
             </div>
-        </header>
+            <nav class="sidebar-nav">
+                <div class="nav-label">MAIN</div>
+                <a href="#" onclick="app.nav('home'); return false;" class="nav-link active" data-view="home">
+                    <span class="nav-icon">🏠</span> Dashboard
+                </a>
+                <a href="#" onclick="app.nav('announcements'); return false;" class="nav-link" data-view="announcements">
+                    <span class="nav-icon">📢</span> Announcements
+                </a>
+                <a href="#" onclick="app.nav('tickets'); return false;" class="nav-link" data-view="tickets">
+                    <span class="nav-icon">🎫</span> Tickets
+                </a>
+                <a href="#" onclick="app.nav('billing'); return false;" class="nav-link" data-view="billing">
+                    <span class="nav-icon">💰</span> Billing
+                </a>
+                
+                <div class="nav-label" style="margin-top: 1.5rem;">MORE</div>
+                <a href="#" onclick="app.nav('notifications'); return false;" class="nav-link" data-view="notifications">
+                    <span class="nav-icon">🔔</span> Notifications
+                    <span id="notification-badge" class="notification-badge hidden">0</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button onclick="app.logout()" class="btn-logout full-width">Logout</button>
+            </div>
+        </div>
 
-        <main class="max-container">
+        <!-- Main Content Area -->
+        <div class="tenant-content">
+            <div class="tenant-header">
+                <h2 id="tenant-page-title">Dashboard</h2>
+            </div>
             
             <button id="back-btn" class="btn-back-main hidden" onclick="app.back()">
                 <span class="back-icon">←</span>
@@ -129,11 +152,57 @@
 
             <section id="billing-view" class="view-section hidden">
                 <h2>Billing Statements</h2>
-                <div id="billing-list" class="card-grid">
+                <div class="billing-grid">
+                    <div class="card">
+                        <h3>💳 Payment Method</h3>
+                        <div id="payment-method" class="payment-method">
+                            <div class="payment-method-brand">GCash</div>
+                            <div class="payment-method-details">
+                                <div><strong>Account Name:</strong> Janet Regidor</div>
+                                <div><strong>Account No:</strong> 0966-5700-206</div>
+                                <div><strong>Note:</strong> Use your Surname as reference.</div>
+                            </div>
+                        </div>
                     </div>
+
+                    <div class="card">
+                        <h3>📅 Payment Schedule</h3>
+                        <div id="payment-schedule" class="schedule-list">
+                            <p class="loading-text">Loading schedule...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3>🧾 Billing History</h3>
+                    <div id="billing-list" class="card-grid"></div>
+                </div>
+
+                <div class="card" style="margin-top: 1rem;">
+                    <h3>⬇️ Payment Receipts</h3>
+                    <div id="receipts-list" class="receipts-list">
+                        <p class="loading-text">Loading receipts...</p>
+                    </div>
+                </div>
             </section>
 
-        </main>
+            <section id="notifications-view" class="view-section hidden">
+                <h2>🔔 Notifications</h2>
+                
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                        <button id="filter-all" class="btn-secondary active" onclick="app.filterNotifications('all')" style="flex: 1;">All</button>
+                        <button id="filter-bills" class="btn-secondary" onclick="app.filterNotifications('bill')" style="flex: 1;">💰 Bills</button>
+                        <button id="filter-announcements" class="btn-secondary" onclick="app.filterNotifications('announcement')" style="flex: 1;">📢 Announcements</button>
+                    </div>
+                    <button onclick="app.clearAllNotifications()" class="btn-text" style="font-size: 0.75rem; color: #858796;">Clear All</button>
+                </div>
+
+                <div id="notifications-list" class="notifications-container">
+                    <p class="loading-text">Loading notifications...</p>
+                </div>
+            </section>
+        </div>
 
         <nav class="mobile-nav">
             <button class="nav-item" onclick="app.nav('home')">
@@ -149,8 +218,13 @@
                 <span class="label">Tickets</span>
             </button>
             <button class="nav-item" onclick="app.nav('billing')">
-                <span class="icon">🧾</span>
+                <span class="icon">💰</span>
                 <span class="label">Billing</span>
+            </button>
+            <button class="nav-item" onclick="app.nav('notifications')" style="position: relative;">
+                <span class="icon">🔔</span>
+                <span class="label">Alerts</span>
+                <span id="mobile-notification-badge" class="notification-badge hidden" style="position: absolute; top: -5px; right: 5px;">0</span>
             </button>
         </nav>
     </div>

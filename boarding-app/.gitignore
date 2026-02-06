@@ -24,3 +24,8 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+.vercel
+.env*.local
+
+# Local secrets
+config.js

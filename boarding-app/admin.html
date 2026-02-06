@@ -8,6 +8,8 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="security.js"></script>
+    <!-- Configuration: See config.example.js for setup -->
+    <script src="config.js"></script>
 </head>
 <body>
 
@@ -16,6 +18,7 @@
             <h1>Admin Access</h1>
             <input type="password" id="admin-pass" placeholder="Admin Password" class="full-width">
             <button onclick="adminApp.login()" class="btn-primary full-width" style="margin-top: 1rem;">Enter</button>
+            <button onclick="window.location.href='index.html'" class="btn-secondary full-width" style="margin-top: 0.5rem;">← Back to Tenant Portal</button>
         </div>
     </section>
 
@@ -157,75 +160,10 @@
                 <div class="card">
                     <button onclick="adminApp.openAnnouncementModal()" class="btn-primary">📢 Post New Announcement</button>
                 </div>
-            </div>
-        </div>
-    </section>
-                    <table class="tenants-table">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Room No</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tenants-tbody">
-                            <tr>
-                                <td colspan="3" style="text-align:center; color:var(--text-muted);">Loading...</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div class="card" style="margin-top: 1rem;">
+                    <div id="admin-announcements-list" class="empty-state">Loading announcements…</div>
                 </div>
             </div>
-        </details>
-
-        <details class="admin-section" open>
-            <summary>
-                <div>
-                    <div class="section-title">📊 Meter Readings</div>
-                    <div class="section-desc">Record monthly water and electric usage</div>
-                </div>
-            </summary>
-            <div class="card section-card">
-                <button onclick="adminApp.openAddReadingModal()" class="btn-primary full-width" style="margin-bottom: 0.75rem;">➕ Add Meter Reading</button>
-                <button onclick="adminApp.openReadingsModal()" class="btn-secondary full-width">📄 View All Readings</button>
-            </div>
-        </details>
-
-        <details class="admin-section">
-            <summary>
-                <div>
-                    <div class="section-title">💰 Billing Management</div>
-                    <div class="section-desc">View and mark tenant payments</div>
-                </div>
-            </summary>
-            <div class="card section-card">
-                <div id="admin-billing-list" class="empty-state">Fetching billing records…</div>
-            </div>
-        </details>
-
-        <details class="admin-section">
-            <summary>
-                <div>
-                    <div class="section-title">🎫 Tickets</div>
-                    <div class="section-desc">Review and resolve support requests</div>
-                </div>
-            </summary>
-            <div class="card section-card">
-                <div id="admin-tickets-list" class="empty-state">Checking for new requests…</div>
-            </div>
-        </details>
-
-        <details class="admin-section">
-            <summary>
-                <div>
-                    <div class="section-title">📢 Announcements</div>
-                    <div class="section-desc">Post updates for tenants</div>
-                </div>
-            </summary>
-            <div class="card section-card">
-                <button onclick="adminApp.openAnnouncementModal()" class="btn-primary full-width">📢 Post New Announcement</button>
-            </div>
-        </details>
         </div>
     </section>
 
@@ -432,6 +370,27 @@
                 <option value="paid">Paid</option>
             </select>
             <button onclick="adminApp.updateBill()" class="btn-primary full-width">Update Bill</button>
+        </div>
+    </div>
+
+    <!-- Payment Type Modal -->
+    <div id="payment-type-modal" class="modal-overlay" onclick="adminApp.closePaymentTypeModal()">
+        <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 400px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h3>💳 Payment Method</h3>
+                <button onclick="adminApp.closePaymentTypeModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
+            </div>
+            <input type="hidden" id="payment-bill-id">
+            <p style="margin-bottom: 1.5rem; color: var(--text-muted);">How was this payment received?</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <button onclick="adminApp.confirmPayment('cash')" class="btn-primary" style="padding: 1rem; font-size: 1.2rem;">
+                    💵<br>Cash
+                </button>
+                <button onclick="adminApp.confirmPayment('gcash')" class="btn-primary" style="padding: 1rem; font-size: 1.2rem; background: #2ecc71;">
+                    💚<br>GCash
+                </button>
+            </div>
+            <button onclick="adminApp.closePaymentTypeModal()" class="btn-secondary full-width" style="margin-top: 1rem;">Cancel</button>
         </div>
     </div>
 

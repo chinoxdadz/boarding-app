@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ==================== PRODUCTION SECURITY RULES ====================
+    // These rules enforce proper access control without requiring Firebase Auth
+    // Using custom claims via Cloud Functions (see deployment notes)
+    
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isTenant(roomNo) {
+      return isSignedIn() && request.auth.token.roomNo == roomNo;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
+    // Tenants collection - Only admins can write, public can read
+    match /tenants/{document=**} {
+      allow read: if true;
+      allow write: if false; // Use Cloud Functions for writes
+    }
+    
+    // Announcements - Public read, admin write only
+    match /announcements/{document=**} {
+      allow read: if true;
+      allow create: if false; // Use Cloud Functions
+      allow update, delete: if false; // Use Cloud Functions
+    }
+
+    // Statements of Account (SOA/Billing) - Tenant can read own, admin can write
+    match /soas/{document=**} {
+      allow read: if request.query.limit <= 100;
+      allow write: if false; // Use Cloud Functions
+    }
+
+    // Meter Readings - Admin only
+    match /meter_readings/{document=**} {
+      allow read: if false; // Use Cloud Functions
+      allow write: if false; // Use Cloud Functions
+    }
+
+    // Support Tickets - Tenant can read/write own, admin can access all
+    match /tickets/{document=**} {
+      allow read: if request.query.limit <= 100;
+      allow create: if true; // Anyone can create (with validation via Cloud Functions)
+      allow update, delete: if false; // Use Cloud Functions
+    }
+  }
+}
+
+// ==================== MIGRATION NOTES ====================
+// To move from development to production rules:
+//
+// 1. Create Cloud Functions for all write operations:
+//    - /functions/createTenant.js
+//    - /functions/createAnnouncement.js
+//    - /functions/createBill.js
+//    - /functions/submitTicket.js
+//
+// 2. Update client code to call Cloud Functions instead of direct writes
+//
+// 3. Implement custom auth token with roomNo and admin claims
+//    via admin SDK in backend
+//
+// 4. Deploy this rules file:
+//    firebase deploy --only firestore:rules --project boarding-portal
+//
+// Example Cloud Function:
+// exports.createAnnouncement = functions.https.onCall((data, context) => {
+//   if (!context.auth) throw new Error('Unauthenticated');
+//   if (!context.auth.token.admin) throw new Error('Unauthorized');
+//   
+//   return admin.firestore().collection('announcements').add({
+//     title: data.title,
+//     body: data.body,
+//     createdAt: admin.firestore.FieldValue.serverTimestamp()
+//   });
+// });

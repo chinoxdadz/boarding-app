@@ -18,8 +18,18 @@ const UNIT_PRICES = {
 };
 
 const adminApp = {
-    // Admin password - Store securely and change regularly
-    ADMIN_PASSWORD: "BH@dm!n2026#Secure",
+    // Admin password loaded from config.js (see SETUP.md)
+    // In production: Copy config.example.js to config.js and set custom password
+    // DO NOT commit config.js to version control!
+    ADMIN_PASSWORD: typeof ADMIN_PASSWORD !== 'undefined' ? ADMIN_PASSWORD : "BH@dm!n2026#Secure",
+
+    normalizeRoomNo: (roomNo) => {
+        return String(roomNo)
+            .trim()
+            .replace(/^room\s*/i, '')
+            .replace(/\s+/g, '')
+            .toLowerCase();
+    },
     
     login: () => {
         const pass = document.getElementById('admin-pass').value;
@@ -27,10 +37,15 @@ const adminApp = {
             document.getElementById('admin-login').classList.add('hidden');
             document.getElementById('admin-dash').classList.remove('hidden');
             adminApp.showView('dashboard');
-            adminApp.loadDashboard();
-            adminApp.loadTenants();
-            adminApp.loadBilling();
-            adminApp.loadTickets();
+            
+            // Load data with error handling
+            setTimeout(() => {
+                adminApp.loadDashboard().catch(e => console.error('Dashboard error:', e));
+                adminApp.loadTenants().catch(e => console.error('Tenants error:', e));
+                adminApp.loadBilling().catch(e => console.error('Billing error:', e));
+                adminApp.loadTickets().catch(e => console.error('Tickets error:', e));
+                adminApp.loadAnnouncements().catch(e => console.error('Announcements error:', e));
+            }, 100);
         } else {
             alert("Wrong password");
         }
@@ -60,6 +75,10 @@ const adminApp = {
             announcements: 'Announcements'
         };
         document.getElementById('page-title').textContent = titles[viewName] || viewName;
+
+        if (viewName === 'announcements') {
+            adminApp.loadAnnouncements().catch(e => console.error('Announcements error:', e));
+        }
     },
 
     // Load Dashboard KPIs and Recent Data
@@ -68,11 +87,13 @@ const adminApp = {
             // Load KPIs
             const tenantsSnap = await db.collection('tenants').get();
             const totalRooms = tenantsSnap.size;
-            document.getElementById('kpi-occupied').textContent = totalRooms;
+            const kpiOccupied = document.getElementById('kpi-occupied');
+            if (kpiOccupied) kpiOccupied.textContent = totalRooms;
             
             // For vacant rooms, you'd need to track total capacity
             // For now, just show a placeholder
-            document.getElementById('kpi-vacant').textContent = '-';
+            const kpiVacant = document.getElementById('kpi-vacant');
+            if (kpiVacant) kpiVacant.textContent = '-';
             
             // Bills due this month
             const now = new Date();
@@ -81,65 +102,76 @@ const adminApp = {
                 .where('month', '==', currentMonth)
                 .where('status', '==', 'unpaid')
                 .get();
-            document.getElementById('kpi-bills-due').textContent = billsSnap.size;
+            const kpiBillsDue = document.getElementById('kpi-bills-due');
+            if (kpiBillsDue) kpiBillsDue.textContent = billsSnap.size;
             
             // Open tickets
             const ticketsSnap = await db.collection('tickets')
                 .where('status', '!=', 'resolved')
                 .get();
-            document.getElementById('kpi-tickets').textContent = ticketsSnap.size;
+            const kpiTickets = document.getElementById('kpi-tickets');
+            if (kpiTickets) kpiTickets.textContent = ticketsSnap.size;
             
             // Recent tenants
             const recentTenants = tenantsSnap.docs.slice(0, 3);
-            if (recentTenants.length > 0) {
-                let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
-                recentTenants.forEach(doc => {
-                    const t = doc.data();
-                    html += `<div style=\"display:flex; justify-content:space-between; padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
-                        <strong>${t.name}</strong>
-                        <span style=\"color:var(--text-muted);\">Room ${t.roomNo}</span>
-                    </div>`;
-                });
-                html += '</div>';
-                document.getElementById('dashboard-tenants').innerHTML = html;
-            } else {
-                document.getElementById('dashboard-tenants').innerHTML = 'No tenants yet';
+            const dashboardTenants = document.getElementById('dashboard-tenants');
+            if (dashboardTenants) {
+                if (recentTenants.length > 0) {
+                    let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
+                    recentTenants.forEach(doc => {
+                        const t = doc.data();
+                        html += `<div style=\"display:flex; justify-content:space-between; padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
+                            <strong>${t.name}</strong>
+                            <span style=\"color:var(--text-muted);\">Room ${t.roomNo}</span>
+                        </div>`;
+                    });
+                    html += '</div>';
+                    dashboardTenants.innerHTML = html;
+                } else {
+                    dashboardTenants.innerHTML = 'No tenants yet';
+                }
             }
             
             // Unpaid bills
-            if (!billsSnap.empty) {
-                let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
-                billsSnap.docs.slice(0, 3).forEach(doc => {
-                    const b = doc.data();
-                    html += `<div style=\"display:flex; justify-content:space-between; padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
-                        <span>Room ${b.roomNo}</span>
-                        <strong style=\"color:var(--danger);\">₱${b.totalAmount}</strong>
-                    </div>`;
-                });
-                html += '</div>';
-                document.getElementById('dashboard-bills').innerHTML = html;
-            } else {
-                document.getElementById('dashboard-bills').innerHTML = 'All caught up! 🎉';
+            const dashboardBills = document.getElementById('dashboard-bills');
+            if (dashboardBills) {
+                if (!billsSnap.empty) {
+                    let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
+                    billsSnap.docs.slice(0, 3).forEach(doc => {
+                        const b = doc.data();
+                        html += `<div style=\"display:flex; justify-content:space-between; padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
+                            <span>Room ${b.roomNo}</span>
+                            <strong style=\"color:var(--danger);\">₱${b.totalAmount}</strong>
+                        </div>`;
+                    });
+                    html += '</div>';
+                    dashboardBills.innerHTML = html;
+                } else {
+                    dashboardBills.innerHTML = 'All caught up! 🎉';
+                }
             }
             
             // Open tickets preview
-            if (!ticketsSnap.empty) {
-                let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
-                ticketsSnap.docs.slice(0, 3).forEach(doc => {
-                    const t = doc.data();
-                    html += `<div style=\"padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
-                        <div style=\"font-weight:600;\">${t.title || 'Untitled'}</div>
-                        <div style=\"font-size:0.75rem; color:var(--text-muted);\">Room ${t.roomNo}</div>
-                    </div>`;
-                });
-                html += '</div>';
-                document.getElementById('dashboard-tickets').innerHTML = html;
-            } else {
-                document.getElementById('dashboard-tickets').innerHTML = 'No open tickets 👍';
+            const dashboardTickets = document.getElementById('dashboard-tickets');
+            if (dashboardTickets) {
+                if (!ticketsSnap.empty) {
+                    let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
+                    ticketsSnap.docs.slice(0, 3).forEach(doc => {
+                        const t = doc.data();
+                        html += `<div style=\"padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
+                            <div style=\"font-weight:600;\">${t.title || 'Untitled'}</div>
+                            <div style=\"font-size:0.75rem; color:var(--text-muted);\">Room ${t.roomNo}</div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                    dashboardTickets.innerHTML = html;
+                } else {
+                    dashboardTickets.innerHTML = 'No open tickets 👍';
+                }
             }
             
         } catch (e) {
-            console.error(e);
+            console.error('Dashboard load error:', e);
         }
     },
 
@@ -157,7 +189,61 @@ const adminApp = {
             });
             alert("Announcement Posted!");
             adminApp.closeAnnouncementModal();
+            adminApp.loadAnnouncements();
         } catch(e) { alert("Error: " + e.message); }
+    },
+
+    // Load Announcements (Admin)
+    loadAnnouncements: async () => {
+        const container = document.getElementById('admin-announcements-list');
+        if (!container) return;
+        container.innerHTML = 'Loading announcements…';
+
+        try {
+            const snap = await db.collection('announcements')
+                .orderBy('createdAt', 'desc')
+                .get();
+
+            if (snap.empty) {
+                container.innerHTML = '<p style="text-align:center; color:var(--text-muted);">No announcements yet.</p>';
+                return;
+            }
+
+            let html = '<div style="display:grid; gap:0.75rem;">';
+            snap.forEach(doc => {
+                const data = doc.data();
+                const title = (typeof Security !== 'undefined' && Security.sanitizeText) ? Security.sanitizeText(data.title || '') : (data.title || '');
+                const body = (typeof Security !== 'undefined' && Security.sanitizeText) ? Security.sanitizeText(data.body || '') : (data.body || '');
+                const date = data.createdAt ? new Date(data.createdAt.seconds * 1000).toLocaleDateString() : 'Just now';
+
+                html += `
+                    <div style="background:var(--bg-color); border:1px solid var(--border); border-radius:0.35rem; padding:0.75rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                            <strong>${title}</strong>
+                            <button onclick="adminApp.deleteAnnouncement('${doc.id}')" class="btn-action danger">🗑 Remove</button>
+                        </div>
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin:0.25rem 0;">${date}</div>
+                        <div style="font-size:0.9rem;">${body}</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        } catch (e) {
+            console.error('Load announcements error:', e);
+            container.innerHTML = '<p style="text-align:center; color:red;">Could not load announcements.</p>';
+        }
+    },
+
+    // Delete Announcement
+    deleteAnnouncement: async (announcementId) => {
+        if (!confirm('Remove this announcement?')) return;
+        try {
+            await db.collection('announcements').doc(announcementId).delete();
+            adminApp.loadAnnouncements();
+        } catch (e) {
+            alert('Error deleting announcement: ' + e.message);
+        }
     },
 
     // 2. Fetch meter readings for selected room and month
@@ -514,12 +600,21 @@ const adminApp = {
         }
 
         try {
+            const roomNoNormalized = adminApp.normalizeRoomNo(roomNo);
+
             // Check if room number already exists
-            const existingRoom = await db.collection('tenants')
-                .where('roomNo', '==', roomNo)
+            let existingRoom = await db.collection('tenants')
+                .where('roomNoNormalized', '==', roomNoNormalized)
                 .limit(1)
                 .get();
-            
+
+            if (existingRoom.empty) {
+                existingRoom = await db.collection('tenants')
+                    .where('roomNo', '==', roomNo)
+                    .limit(1)
+                    .get();
+            }
+
             if (!existingRoom.empty) {
                 return alert(`Room ${roomNo} is already occupied!`);
             }
@@ -528,6 +623,7 @@ const adminApp = {
             await db.collection('tenants').add({
                 name: name,
                 roomNo: roomNo,
+                roomNoNormalized: roomNoNormalized,
                 pin: pin,
                 email: email || '',
                 phone: phone || '',
@@ -586,11 +682,19 @@ const adminApp = {
         }
 
         try {
+            const roomNoNormalized = adminApp.normalizeRoomNo(roomNo);
+
             // Check if room number is taken by another tenant
-            const existingRoom = await db.collection('tenants')
-                .where('roomNo', '==', roomNo)
+            let existingRoom = await db.collection('tenants')
+                .where('roomNoNormalized', '==', roomNoNormalized)
                 .get();
-            
+
+            if (existingRoom.empty) {
+                existingRoom = await db.collection('tenants')
+                    .where('roomNo', '==', roomNo)
+                    .get();
+            }
+
             // Check if any other tenant (not this one) has this room
             const conflict = existingRoom.docs.find(doc => doc.id !== id);
             if (conflict) {
@@ -601,6 +705,7 @@ const adminApp = {
             await db.collection('tenants').doc(id).update({
                 name: name,
                 roomNo: roomNo,
+                roomNoNormalized: roomNoNormalized,
                 pin: pin,
                 email: email || '',
                 phone: phone || ''
@@ -650,11 +755,16 @@ const adminApp = {
                 const status = data.status || 'unpaid';
                 const statusColor = status === 'paid' ? 'green' : 'red';
                 const statusText = status === 'paid' ? '✅ Paid' : '❌ Unpaid';
+                const paymentType = data.paymentType || '';
+                const paymentIcon = paymentType === 'cash' ? '💵' : paymentType === 'gcash' ? '💚' : '';
+                const paymentLabel = paymentType === 'cash' ? 'Cash' : paymentType === 'gcash' ? 'GCash' : '';
                 const total = data.totalAmount || 0;
 
                 const actionButton = status === 'paid'
                     ? `<button onclick="adminApp.updateBillStatus('${id}', 'unpaid')" class="btn-action danger">Mark Unpaid</button>`
-                    : `<button onclick="adminApp.updateBillStatus('${id}', 'paid')" class="btn-action success">Mark Paid</button>`;
+                    : `<button onclick="adminApp.showPaymentTypeModal('${id}')" class="btn-action success">✓ Mark Paid</button>`;
+
+                const paymentTypeDisplay = paymentType ? `<span style="color:var(--text-muted); margin-left:10px; padding:2px 8px; background:#f0f0f0; border-radius:4px; font-size:0.85rem;">${paymentIcon} ${paymentLabel}</span>` : '';
 
                 html += `
                     <div style="border: 1px solid var(--border); border-left: 5px solid ${statusColor}; padding: 15px; border-radius: 8px; background: white;">
@@ -662,6 +772,7 @@ const adminApp = {
                             <div>
                                 <strong style="font-size:1.1rem;">Room ${data.roomNo}</strong>
                                 <span style="color:var(--text-muted); margin-left:10px;">${data.month}</span>
+                                ${paymentTypeDisplay}
                             </div>
                             <span style="color:${statusColor}; font-weight:bold;">${statusText}</span>
                         </div>
@@ -712,6 +823,36 @@ const adminApp = {
             adminApp.loadBilling(); // Refresh the list
         } catch(e) { 
             alert('Error updating status: ' + e.message); 
+        }
+    },
+
+    // Show Payment Type Modal
+    showPaymentTypeModal: (billId) => {
+        document.getElementById('payment-bill-id').value = billId;
+        document.getElementById('payment-type-modal').style.display = 'flex';
+    },
+
+    // Close Payment Type Modal
+    closePaymentTypeModal: () => {
+        document.getElementById('payment-type-modal').style.display = 'none';
+        document.getElementById('payment-bill-id').value = '';
+    },
+
+    // Confirm Payment with Type
+    confirmPayment: async (paymentType) => {
+        const billId = document.getElementById('payment-bill-id').value;
+        if (!billId) return;
+
+        try {
+            await db.collection('soas').doc(billId).update({ 
+                status: 'paid',
+                paymentType: paymentType
+            });
+            adminApp.closePaymentTypeModal();
+            adminApp.loadBilling(); // Refresh the list
+            alert('Bill marked as paid! E-receipt is ready for download.');
+        } catch(e) {
+            alert('Error updating bill: ' + e.message);
         }
     },
 

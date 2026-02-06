@@ -18,10 +18,10 @@ const Security = {
         return Security.escapeHtml(String(text).trim());
     },
 
-    // Validate room number (alphanumeric, max 10 chars)
+    // Validate room number (alphanumeric, spaces, hyphen, max 15 chars)
     validateRoomNo: (roomNo) => {
         const sanitized = String(roomNo).trim();
-        if (!/^[a-zA-Z0-9]{1,10}$/.test(sanitized)) {
+        if (!/^[a-zA-Z0-9\s-]{1,15}$/.test(sanitized)) {
             throw new Error('Invalid room number format');
         }
         return sanitized;
@@ -100,15 +100,17 @@ const Security = {
         'default-src': ["'self'"],
         'script-src': [
             "'self'",
+            "'unsafe-inline'",
             "https://www.gstatic.com/firebasejs/"
         ],
-        'style-src': ["'self'", "'unsafe-inline'"], // Note: Consider removing unsafe-inline
+        'style-src': ["'self'", "'unsafe-inline'"],
         'img-src': ["'self'", "data:", "https:"],
         'connect-src': [
             "'self'",
             "https://*.firebaseio.com",
             "https://*.googleapis.com",
-            "https://firestore.googleapis.com"
+            "https://firestore.googleapis.com",
+            "https://www.gstatic.com"
         ],
         'font-src': ["'self'"],
         'object-src': ["'none'"],
@@ -139,6 +141,9 @@ const Security = {
         },
 
         checkExpiration: () => {
+            if (typeof Security.session.lastActivity !== 'number' || isNaN(Security.session.lastActivity)) {
+                Security.session.lastActivity = Date.now();
+            }
             if (Security.session.isExpired()) {
                 localStorage.removeItem('bh_tenant');
                 alert('Your session has expired for security reasons. Please log in again.');
@@ -151,6 +156,19 @@ const Security = {
 
     // Initialize security measures
     init: () => {
+        // Restore session activity from stored login
+        const stored = localStorage.getItem('bh_tenant');
+        if (stored) {
+            try {
+                const session = JSON.parse(stored);
+                if (session && session.loginTime) {
+                    Security.session.lastActivity = Number(session.loginTime) || Date.now();
+                }
+            } catch (e) {
+                // Ignore malformed session
+            }
+        }
+
         // Add activity listeners
         ['click', 'keypress', 'scroll', 'mousemove'].forEach(event => {
             document.addEventListener(event, Security.session.updateActivity, { passive: true });
@@ -161,11 +179,15 @@ const Security = {
             Security.session.checkExpiration();
         }, 60000);
 
-        // Add CSP meta tag (Note: Server-side headers are preferred)
+        // NOTE: CSP meta tag initialization is disabled to avoid conflicts
+        // with Firebase and inline event handlers. Server-side headers are preferred.
+        // If needed, uncomment below for development:
+        /*
         const meta = document.createElement('meta');
         meta.httpEquiv = 'Content-Security-Policy';
         meta.content = Security.getCspHeader();
         document.head.appendChild(meta);
+        */
     }
 };
 

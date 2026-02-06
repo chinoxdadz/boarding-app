@@ -19,10 +19,19 @@ function formatDate(ts) {
     return new Date(ts).toLocaleDateString();
 }
 
+function normalizeRoomNo(roomNo) {
+    return String(roomNo)
+        .trim()
+        .replace(/^room\s*/i, '')
+        .replace(/\s+/g, '')
+        .toLowerCase();
+}
+
 // ==================== STATE MANAGEMENT ====================
 const app = {
     user: null, // Stores { roomNo, pin, ... }
     history: [], // Navigation history
+    _lastBills: [],
     
     // Initialize App
     init: () => {
@@ -40,6 +49,28 @@ const app = {
         // Add to history if not going back
         if (app.history[app.history.length - 1] !== screen) {
             app.history.push(screen);
+        }
+        
+        // Update sidebar active state
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.classList.remove('active');
+        });
+        const activeLink = document.querySelector(`[data-view="${screen}"]`);
+        if (activeLink) {
+            activeLink.classList.add('active');
+        }
+        
+        // Update page title
+        const titleMap = {
+            'home': 'Dashboard',
+            'announcements': 'Announcements',
+            'tickets': 'Support Tickets',
+            'billing': 'Billing Statements',
+            'notifications': 'Notifications'
+        };
+        const pageTitle = document.getElementById('tenant-page-title');
+        if (pageTitle) {
+            pageTitle.textContent = titleMap[screen] || 'Dashboard';
         }
         
         // Hide all views
@@ -102,19 +133,32 @@ const app = {
             // Check Firestore for matching Room AND PIN
             // WARNING: This is NOT secure! PINs should be hashed server-side
             // For production, use Firebase Authentication or Cloud Functions
-            const snapshot = await db.collection('tenants')
-                .where('roomNo', '==', room)
-                .where('pin', '==', pin)
-                .limit(1)
-                .get();
+            const roomNormalized = normalizeRoomNo(room);
 
-            if (!snapshot.empty) {
+            const tryMatch = async (field, value) => {
+                const snap = await db.collection('tenants')
+                    .where(field, '==', value)
+                    .limit(1)
+                    .get();
+                if (snap.empty) return null;
+                const doc = snap.docs[0];
+                const data = doc.data();
+                return (String(data.pin || '') === String(pin)) ? { id: doc.id, data } : null;
+            };
+
+            let match = await tryMatch('roomNoNormalized', roomNormalized);
+            if (!match) match = await tryMatch('roomNo', room);
+            if (!match) match = await tryMatch('roomNo', `Room ${room}`);
+            if (!match) match = await tryMatch('roomNo', `Room${room}`);
+
+            if (match) {
                 Security.rateLimiter.recordAttempt(room, true);
-                app.user = { roomNo: room };
+                const roomValue = match.data.roomNo || room;
+                app.user = { roomNo: roomValue };
                 
                 // Store with timestamp for session management
                 const sessionData = {
-                    roomNo: room,
+                    roomNo: roomValue,
                     loginTime: Date.now()
                 };
                 localStorage.setItem('bh_tenant', JSON.stringify(sessionData));
@@ -155,6 +199,12 @@ const app = {
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-container').classList.remove('hidden');
         app.nav('home'); // Load dashboard by default
+        if (typeof Security !== 'undefined' && Security.session && Security.session.updateActivity) {
+            Security.session.updateActivity();
+        }
+        app.initNotifications();
+        app.requestNotificationPermission();
+        app.updateNotificationBadge();
     },
 
     // ==================== DATA FETCHING ====================
@@ -167,6 +217,234 @@ const app = {
             app.fetchTickets();
         } else if (screen === 'billing') {
             app.fetchBilling();
+        } else if (screen === 'notifications') {
+            app.fetchNotifications();
+        }
+    },
+
+    // ==================== NOTIFICATIONS ====================
+    notifications: {
+        list: [],
+        filtered: [],
+        currentFilter: 'all'
+    },
+
+    initNotifications: async () => {
+        app.checkForNewNotifications();
+        // Check for notifications every 30 seconds
+        setInterval(app.checkForNewNotifications, 30000);
+    },
+
+    checkForNewNotifications: async () => {
+        if (!app.user) return;
+        
+        try {
+            const now = new Date();
+            const lastCheck = localStorage.getItem('bh_last_notification_check');
+            const lastCheckDate = lastCheck ? new Date(lastCheck) : new Date(0);
+            
+            // Check for unpaid bills
+            const billsSnap = await db.collection('soas')
+                .where('roomNo', '==', app.user.roomNo)
+                .where('status', '==', 'unpaid')
+                .get();
+            
+            billsSnap.forEach(doc => {
+                const bill = doc.data();
+                const notificationId = `bill-${doc.id}`;
+                
+                if (!app.notifications.list.find(n => n.id === notificationId)) {
+                    const daysUntilDue = Math.ceil((new Date(bill.dueDate) - now) / (1000 * 60 * 60 * 24));
+                    
+                    app.notifications.list.unshift({
+                        id: notificationId,
+                        type: 'bill',
+                        title: `📊 Bill Due: Room ${bill.roomNo}`,
+                        message: `₱${bill.totalAmount.toFixed(2)} due on ${bill.dueDate}${daysUntilDue <= 3 && daysUntilDue > 0 ? ' (in ' + daysUntilDue + ' days)' : ''}`,
+                        timestamp: new Date(),
+                        read: false,
+                        data: { billId: doc.id, roomNo: bill.roomNo, amount: bill.totalAmount }
+                    });
+                    
+                    app.sendBrowserNotification('📊 Bill Due', `₱${bill.totalAmount.toFixed(2)} due on ${bill.dueDate}`);
+                }
+            });
+            
+            // Check for new announcements
+            const announcementsSnap = await db.collection('announcements')
+                .where('createdAt', '>', new firebase.firestore.Timestamp(Math.floor(lastCheckDate / 1000), 0))
+                .get();
+            
+            announcementsSnap.forEach(doc => {
+                const ann = doc.data();
+                const notificationId = `ann-${doc.id}`;
+                
+                if (!app.notifications.list.find(n => n.id === notificationId)) {
+                    app.notifications.list.unshift({
+                        id: notificationId,
+                        type: 'announcement',
+                        title: `📢 ${Security.sanitizeText(ann.title)}`,
+                        message: Security.sanitizeText(ann.body).substring(0, 100),
+                        timestamp: new Date(ann.createdAt.seconds * 1000),
+                        read: false,
+                        data: { announcementId: doc.id }
+                    });
+                    
+                    app.sendBrowserNotification('📢 New Announcement', Security.sanitizeText(ann.title));
+                }
+            });
+            
+            localStorage.setItem('bh_last_notification_check', now.toISOString());
+            localStorage.setItem('bh_notifications', JSON.stringify(app.notifications.list));
+            app.updateNotificationBadge();
+            
+        } catch (e) {
+            console.error('Error checking notifications:', e);
+        }
+    },
+
+    fetchNotifications: async () => {
+        const container = document.getElementById('notifications-list');
+        container.innerHTML = 'Loading notifications...';
+        
+        // Load from localStorage first
+        const stored = localStorage.getItem('bh_notifications');
+        if (stored) {
+            app.notifications.list = JSON.parse(stored);
+        }
+        
+        app.filterNotifications(app.notifications.currentFilter);
+    },
+
+    filterNotifications: (filter) => {
+        app.notifications.currentFilter = filter;
+        
+        // Update filter buttons
+        document.querySelectorAll('[id^="filter-"]').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        document.getElementById(`filter-${filter}`).classList.add('active');
+        
+        // Filter notifications
+        if (filter === 'all') {
+            app.notifications.filtered = [...app.notifications.list];
+        } else {
+            app.notifications.filtered = app.notifications.list.filter(n => n.type === filter);
+        }
+        
+        app.renderNotifications();
+    },
+
+    renderNotifications: () => {
+        const container = document.getElementById('notifications-list');
+        
+        if (app.notifications.filtered.length === 0) {
+            container.innerHTML = `
+                <div class="notification-empty">
+                    <p style="font-size: 2rem;">🔕</p>
+                    <p>No notifications yet</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = '';
+        app.notifications.filtered.forEach(notification => {
+            const timeAgo = app.getTimeAgo(notification.timestamp);
+            const unreadClass = notification.read ? '' : 'unread';
+            
+            html += `
+                <div class="notification-item ${notification.type} ${unreadClass}" data-notification-id="${notification.id}">
+                    <div class="notification-header">
+                        <h4 class="notification-title">${notification.title}</h4>
+                        <span class="notification-type ${notification.type}">${notification.type}</span>
+                    </div>
+                    <p class="notification-message">${notification.message}</p>
+                    <div class="notification-footer">
+                        <span class="notification-time">${timeAgo}</span>
+                        <div class="notification-actions">
+                            ${!notification.read ? `<button class="notification-btn" onclick="app.markNotificationAsRead('${notification.id}')">Mark as read</button>` : ''}
+                            <button class="notification-btn" onclick="app.deleteNotification('${notification.id}')">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+    },
+
+    markNotificationAsRead: (notificationId) => {
+        const notification = app.notifications.list.find(n => n.id === notificationId);
+        if (notification) {
+            notification.read = true;
+            localStorage.setItem('bh_notifications', JSON.stringify(app.notifications.list));
+            app.renderNotifications();
+            app.updateNotificationBadge();
+        }
+    },
+
+    deleteNotification: (notificationId) => {
+        app.notifications.list = app.notifications.list.filter(n => n.id !== notificationId);
+        localStorage.setItem('bh_notifications', JSON.stringify(app.notifications.list));
+        app.fetchNotifications(); // Re-render
+        app.updateNotificationBadge();
+    },
+
+    clearAllNotifications: () => {
+        if (confirm('Clear all notifications?')) {
+            app.notifications.list = [];
+            localStorage.setItem('bh_notifications', JSON.stringify([]));
+            app.fetchNotifications();
+            app.updateNotificationBadge();
+        }
+    },
+
+    updateNotificationBadge: () => {
+        const unreadCount = app.notifications.list.filter(n => !n.read).length;
+        const badge = document.getElementById('notification-badge');
+        const mobileBadge = document.getElementById('mobile-notification-badge');
+        
+        if (unreadCount > 0) {
+            badge?.classList.remove('hidden');
+            badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+            mobileBadge?.classList.remove('hidden');
+            mobileBadge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+        } else {
+            badge?.classList.add('hidden');
+            mobileBadge?.classList.add('hidden');
+        }
+    },
+
+    getTimeAgo: (date) => {
+        const now = new Date();
+        const secondsAgo = Math.floor((now - date) / 1000);
+        
+        if (secondsAgo < 60) return 'Just now';
+        const minutesAgo = Math.floor(secondsAgo / 60);
+        if (minutesAgo < 60) return `${minutesAgo}m ago`;
+        const hoursAgo = Math.floor(minutesAgo / 60);
+        if (hoursAgo < 24) return `${hoursAgo}h ago`;
+        const daysAgo = Math.floor(hoursAgo / 24);
+        if (daysAgo < 7) return `${daysAgo}d ago`;
+        return date.toLocaleDateString();
+    },
+
+    sendBrowserNotification: (title, message) => {
+        // Only send if user has granted permission and browser supports it
+        if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(title, {
+                body: message,
+                icon: '🏠',
+                tag: 'boarding-house-notification',
+                requireInteraction: false
+            });
+        }
+    },
+
+    requestNotificationPermission: () => {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
         }
     },
 
@@ -351,6 +629,11 @@ const app = {
         const container = document.getElementById('billing-list');
         container.innerHTML = 'Loading...';
 
+        const scheduleContainer = document.getElementById('payment-schedule');
+        const receiptsContainer = document.getElementById('receipts-list');
+        if (scheduleContainer) scheduleContainer.innerHTML = 'Loading schedule...';
+        if (receiptsContainer) receiptsContainer.innerHTML = 'Loading receipts...';
+
         try {
             const snap = await db.collection('soas')
                 .where('roomNo', '==', app.user.roomNo)
@@ -358,6 +641,7 @@ const app = {
                 .get();
 
             let html = '';
+            const bills = [];
             snap.forEach(doc => {
                 const data = doc.data();
                 // SAFEGUARDS: Default values if data is missing
@@ -391,19 +675,183 @@ const app = {
                         </div>
                     </div>
                 `;
+
+                bills.push({
+                    id: doc.id,
+                    ...data,
+                    status: safeStatus,
+                    totalAmount: safeTotal,
+                    electricAmount: electric
+                });
             });
             container.innerHTML = html || '<p class="loading-text">No billing history found.</p>';
+
+            app._lastBills = bills;
+            app.renderPaymentSchedule(bills);
+            app.renderReceipts(bills);
         } catch(e) {
             console.error("Billing List Error:", e);
             container.innerHTML = "<p>Error loading bills.</p>";
+            if (scheduleContainer) scheduleContainer.innerHTML = '<p>Error loading schedule.</p>';
+            if (receiptsContainer) receiptsContainer.innerHTML = '<p>Error loading receipts.</p>';
         }
     }
 
     ,
 
-    
+    renderPaymentSchedule: (bills) => {
+        const container = document.getElementById('payment-schedule');
+        if (!container) return;
 
-    
+        const upcoming = bills
+            .filter(b => (b.status || '').toLowerCase() === 'unpaid' && b.dueDate)
+            .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
+        if (upcoming.length === 0) {
+            container.innerHTML = '<p class="loading-text">No upcoming payments.</p>';
+            return;
+        }
+
+        let html = '';
+        upcoming.forEach(bill => {
+            const amount = Number(bill.totalAmount || 0);
+            html += `
+                <div class="schedule-item">
+                    <div>
+                        <div class="schedule-date">${bill.dueDate}</div>
+                        <div style="font-size:0.75rem; color:var(--text-muted);">${bill.month || 'Billing Period'}</div>
+                    </div>
+                    <div class="schedule-amount">₱${amount.toFixed(2)}</div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    },
+
+    renderReceipts: (bills) => {
+        const container = document.getElementById('receipts-list');
+        if (!container) return;
+
+        const paid = bills.filter(b => (b.status || '').toLowerCase() === 'paid');
+        if (paid.length === 0) {
+            container.innerHTML = '<p class="loading-text">No receipts yet. Paid bills will appear here.</p>';
+            return;
+        }
+
+        let html = '';
+        paid.forEach(bill => {
+            const amount = Number(bill.totalAmount || 0);
+            html += `
+                <div class="receipt-item">
+                    <div class="receipt-info">
+                        <div class="receipt-title">Receipt • ${bill.month || 'N/A'}</div>
+                        <div class="receipt-meta">Total: ₱${amount.toFixed(2)} • Room ${bill.roomNo || app.user.roomNo}</div>
+                    </div>
+                    <div class="receipt-actions">
+                        <button class="btn-action secondary" onclick="app.viewReceipt('${bill.id}')">👁️ View</button>
+                        <button class="btn-action primary" onclick="app.downloadReceipt('${bill.id}')">⬇️ Download</button>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    },
+
+    viewReceipt: async (billId) => {
+        if (!billId) return;
+
+        try {
+            // Fetch fresh data from Firestore to ensure we have latest paymentType
+            const billDoc = await db.collection('soas').doc(billId).get();
+            if (!billDoc.exists) {
+                alert('Receipt not found.');
+                return;
+            }
+
+            const bill = {
+                id: billDoc.id,
+                ...billDoc.data()
+            };
+
+            // Fetch tenant name from Firestore
+            let tenantName = app.user.name || 'Tenant';
+            try {
+                const tenantDoc = await db.collection('tenants')
+                    .where('roomNo', '==', bill.roomNo)
+                    .limit(1)
+                    .get();
+                
+                if (!tenantDoc.empty) {
+                    tenantName = tenantDoc.docs[0].data().name || tenantName;
+                }
+            } catch(e) {
+                console.log('Could not fetch tenant name:', e);
+            }
+
+            // Get tenant information for receipt
+            const tenant = {
+                name: tenantName,
+                roomNo: bill.roomNo
+            };
+
+            // Open professional e-receipt in new window for viewing
+            receipt.openReceipt(bill, tenant);
+        } catch(e) {
+            console.error('Error fetching receipt:', e);
+            alert('Error loading receipt.');
+        }
+    },
+
+    downloadReceipt: async (billId) => {
+        if (!billId) return;
+
+        try {
+            // Fetch fresh data from Firestore to ensure we have latest paymentType
+            const billDoc = await db.collection('soas').doc(billId).get();
+            if (!billDoc.exists) {
+                alert('Receipt not found.');
+                return;
+            }
+
+            const bill = {
+                id: billDoc.id,
+                ...billDoc.data()
+            };
+
+            // Fetch tenant name from Firestore
+            let tenantName = app.user.name || 'Tenant';
+            try {
+                const tenantDoc = await db.collection('tenants')
+                    .where('roomNo', '==', bill.roomNo)
+                    .limit(1)
+                    .get();
+                
+                if (!tenantDoc.empty) {
+                    tenantName = tenantDoc.docs[0].data().name || tenantName;
+                }
+            } catch(e) {
+                console.log('Could not fetch tenant name:', e);
+            }
+
+            // Get tenant information for receipt
+            const tenant = {
+                name: tenantName,
+                roomNo: bill.roomNo
+            };
+
+            // Download professional e-receipt as HTML file
+            receipt.downloadAsHTML(bill, tenant);
+        } catch(e) {
+            console.error('Error downloading receipt:', e);
+            alert('Error downloading receipt.');
+        }
+    },
+
+    _findBillById: (billId) => {
+        // Re-fetch from local cache by reading latest from billing list in memory
+        // Store last fetched bills on app for receipt downloads
+        return app._lastBills ? app._lastBills.find(b => b.id === billId) : null;
+    }
 };
 
 // ==================== EVENT LISTENERS ====================
