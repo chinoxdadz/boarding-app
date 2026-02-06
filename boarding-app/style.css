@@ -1,17 +1,17 @@
 :root {
-    --primary: #4e73df;
-    --primary-dark: #2e59d9;
-    --bg-color: #f8f9fc;
-    --card-bg: #ffffff;
-    --text-main: #5a5c69;
-    --text-muted: #858796;
-    --border: #e3e6f0;
-    --success: #1cc88a;
-    --warning: #f6c23e;
-    --danger: #e74a3b;
-    --info: #36b9cc;
-    --shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15);
-    --shadow-sm: 0 0.125rem 0.25rem 0 rgba(58, 59, 69, 0.2);
+    --primary: #268bd2;
+    --primary-dark: #1f6fa6;
+    --bg-color: #002b36;
+    --card-bg: #0b3f4c;
+    --text-main: #93a1a1;
+    --text-muted: #586e75;
+    --border: #114b5a;
+    --success: #859900;
+    --warning: #b58900;
+    --danger: #dc322f;
+    --info: #2aa198;
+    --shadow: 0 0.15rem 1.75rem 0 rgba(0, 0, 0, 0.35);
+    --shadow-sm: 0 0.125rem 0.25rem 0 rgba(0, 0, 0, 0.3);
 }
 
 /* Fluid base font for responsive scaling - Mobile First */
@@ -32,7 +32,19 @@ html {
 * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
 body { 
-    background-color: var(--bg-color); 
+    background-color: var(--bg-color);
+    background-image:
+        radial-gradient(600px 320px at 10% -10%, rgba(42, 161, 152, 0.10), transparent 60%),
+        radial-gradient(520px 260px at 90% 10%, rgba(38, 139, 210, 0.10), transparent 60%),
+        radial-gradient(420px 240px at 85% 90%, rgba(108, 113, 196, 0.08), transparent 60%),
+        linear-gradient(rgba(147, 161, 161, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(147, 161, 161, 0.08) 1px, transparent 1px);
+    background-size:
+        100% 100%,
+        100% 100%,
+        100% 100%,
+        16px 16px,
+        16px 16px;
     color: var(--text-main); 
     line-height: 1.5;
     font-size: 0.9rem;
@@ -350,8 +362,6 @@ h3 {
     font-size: 1.5rem;
     font-weight: 700;
     color: var(--text-main);
-}
-    width: calc(100% - 260px);
 }
 
 /* Tablet */
