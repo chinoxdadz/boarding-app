@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Boarding House App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;650&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -18,14 +21,14 @@
             <form id="login-form">
                 <div class="form-group">
                     <label>Room Number</label>
-                    <input type="text" id="login-room" placeholder="e.g. 101" required>
+                    <input type="text" id="login-room" placeholder="e.g. 101" autocomplete="username" required>
                 </div>
                 <div class="form-group">
                     <label>PIN Code</label>
-                    <input type="password" id="login-pin" placeholder="****" required>
+                    <input type="password" id="login-pin" placeholder="****" autocomplete="current-password" inputmode="numeric" required>
                 </div>
                 <button type="submit" class="btn-primary full-width">Login</button>
-                <div id="login-error" class="error-msg"></div>
+                <div id="login-error" class="error-msg" aria-live="polite"></div>
             </form>
         </div>
     </section>

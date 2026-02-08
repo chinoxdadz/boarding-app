@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Boarding House App</title>
+    <title>Tenant Portal</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;650&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <link rel="manifest" href="manifest.json">
     
@@ -22,14 +25,14 @@
             <form id="login-form">
                 <div class="form-group">
                     <label>Room Number</label>
-                    <input type="text" id="login-room" placeholder="e.g. 101" required>
+                    <input type="text" id="login-room" placeholder="Room No." autocomplete="username" required>
                 </div>
                 <div class="form-group">
                     <label>PIN Code</label>
-                    <input type="password" id="login-pin" placeholder="****" required>
+                    <input type="password" id="login-pin" placeholder="PIN Code" autocomplete="current-password" inputmode="numeric" required>
                 </div>
                 <button type="submit" class="btn-primary full-width">Login</button>
-                <div id="login-error" class="error-msg"></div>
+                <div id="login-error" class="error-msg" aria-live="polite"></div>
             </form>
                 <div style="margin-top: 2rem; border-top: 1px solid #eee; padding-top: 1rem;">
                  <a href="admin.html" style="color: #ccc; text-decoration: none; font-size: 0.8rem;">

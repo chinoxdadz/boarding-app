@@ -18,6 +18,12 @@ const UNIT_PRICES = {
 };
 
 const adminApp = {
+    SESSION_KEY: 'bh_admin_session',
+    SESSION_TTL_MS: 12 * 60 * 60 * 1000,
+    allReadings: null,
+    dashboardBillsUnsub: null,
+    tenantSelectionMode: null,
+    tenantsTableBound: false,
     // Admin password loaded from config.js (see SETUP.md)
     // In production: Copy config.example.js to config.js and set custom password
     // DO NOT commit config.js to version control!
@@ -31,10 +37,286 @@ const adminApp = {
             .toLowerCase();
     },
 
+    formatTenantLabel: (name) => {
+        const safeName = String(name || '').trim();
+        if (!safeName) return 'N/A';
+        const parts = safeName.split(/\s+/);
+        const first = parts[0] || '';
+        const last = parts.length > 1 ? parts[parts.length - 1] : first;
+        const initial = first ? `${first[0].toUpperCase()}.` : '';
+        return initial ? `${last}, ${initial}` : last;
+    },
+
+    getReadingTimestamp: (reading) => {
+        if (reading?.createdAt?.seconds) return reading.createdAt.seconds * 1000;
+        if (reading?.createdAt) return new Date(reading.createdAt).getTime();
+        if (reading?.readingDate) return new Date(reading.readingDate).getTime();
+        return 0;
+    },
+
+    findCurrentReadingForMonth: (readings, month) => {
+        if (!Array.isArray(readings) || !month) return null;
+        return readings.find(r => r.readingDate && r.readingDate.startsWith(month)) || null;
+    },
+
+    findPreviousReading: (readings, currentReading) => {
+        if (!Array.isArray(readings) || !currentReading?.readingDate) return null;
+        const currentTime = new Date(currentReading.readingDate).getTime();
+        return readings.find(r => r.readingDate && new Date(r.readingDate).getTime() < currentTime) || null;
+    },
+
+    escapeAttr: (value) => {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    },
+
+    getTicketTitle: (data) => {
+        const raw = (data?.title || data?.subject || data?.summary || data?.message || data?.description || '').trim();
+        const title = raw || 'Ticket';
+        const shortTitle = title.length > 48 ? `${title.slice(0, 47)}...` : title;
+        return (typeof Security !== 'undefined' && Security.sanitizeText)
+            ? Security.sanitizeText(shortTitle)
+            : shortTitle;
+    },
+
+    getTenantFromDataset: (el) => {
+        if (!el?.dataset) return null;
+        return {
+            id: el.dataset.tenantId || '',
+            name: el.dataset.tenantName || '',
+            roomNo: el.dataset.tenantRoomNo || '',
+            email: el.dataset.tenantEmail || '',
+            phone: el.dataset.tenantPhone || '',
+            pin: el.dataset.tenantPin || ''
+        };
+    },
+
+    getBillRates: () => {
+        const waterInput = document.getElementById('bill-water-rate');
+        const electricInput = document.getElementById('bill-electric-rate');
+        const waterRate = parseFloat(waterInput?.value);
+        const electricRate = parseFloat(electricInput?.value);
+        return {
+            waterRate: Number.isFinite(waterRate) ? waterRate : UNIT_PRICES.water,
+            electricRate: Number.isFinite(electricRate) ? electricRate : UNIT_PRICES.electric
+        };
+    },
+
+    applyBillRates: (waterRate, electricRate) => {
+        const waterInput = document.getElementById('bill-water-rate');
+        const electricInput = document.getElementById('bill-electric-rate');
+        if (waterInput) waterInput.value = Number(waterRate || 0) || 0;
+        if (electricInput) electricInput.value = Number(electricRate || 0) || 0;
+    },
+
+    loadRatesForMonth: (month) => {
+        if (!month) {
+            adminApp.applyBillRates(UNIT_PRICES.water, UNIT_PRICES.electric);
+            adminApp.updateRatePreview();
+            return;
+        }
+
+        const raw = localStorage.getItem(`bh_rates_${month}`);
+        if (raw) {
+            try {
+                const cached = JSON.parse(raw);
+                adminApp.applyBillRates(cached.waterRate ?? UNIT_PRICES.water, cached.electricRate ?? UNIT_PRICES.electric);
+                adminApp.updateRatePreview();
+                return;
+            } catch (e) {
+                console.warn('Rate cache parse failed:', e);
+            }
+        }
+
+        adminApp.applyBillRates(UNIT_PRICES.water, UNIT_PRICES.electric);
+        adminApp.updateRatePreview();
+    },
+
+    cacheRatesForMonth: (month, waterRate, electricRate) => {
+        if (!month) return;
+        localStorage.setItem(`bh_rates_${month}`, JSON.stringify({
+            waterRate: Number(waterRate || 0),
+            electricRate: Number(electricRate || 0)
+        }));
+    },
+
+    updateRatePreview: () => {
+        const { waterRate, electricRate } = adminApp.getBillRates();
+        const waterRateEl = document.getElementById('water-rate');
+        const electricRateEl = document.getElementById('electric-rate');
+
+        if (waterRateEl) waterRateEl.textContent = waterRate.toFixed(2);
+        if (electricRateEl) electricRateEl.textContent = electricRate.toFixed(2);
+
+        const prevWaterRaw = document.getElementById('bill-water-prev')?.value ?? '';
+        const currWaterRaw = document.getElementById('bill-water-reading')?.value ?? '';
+        const prevElectricRaw = document.getElementById('bill-electric-prev')?.value ?? '';
+        const currElectricRaw = document.getElementById('bill-electric-reading')?.value ?? '';
+
+        const prevWater = parseFloat(prevWaterRaw);
+        const currWater = parseFloat(currWaterRaw);
+        const prevElectric = parseFloat(prevElectricRaw);
+        const currElectric = parseFloat(currElectricRaw);
+
+        const waterConsumptionEl = document.getElementById('water-consumption');
+        const waterCostEl = document.getElementById('water-cost');
+        const electricConsumptionEl = document.getElementById('electric-consumption');
+        const electricCostEl = document.getElementById('electric-cost');
+
+        if (Number.isFinite(prevWater) && currWaterRaw !== '') {
+            const waterConsumption = Math.max(0, (Number.isFinite(currWater) ? currWater : 0) - prevWater);
+            const waterCost = waterConsumption * waterRate;
+            if (waterConsumptionEl) waterConsumptionEl.textContent = waterConsumption.toFixed(2);
+            if (waterCostEl) waterCostEl.textContent = waterCost.toFixed(2);
+        } else {
+            if (waterConsumptionEl) waterConsumptionEl.textContent = '0';
+            if (waterCostEl) waterCostEl.textContent = '0';
+        }
+
+        if (Number.isFinite(prevElectric) && currElectricRaw !== '') {
+            const electricConsumption = Math.max(0, (Number.isFinite(currElectric) ? currElectric : 0) - prevElectric);
+            const electricCost = electricConsumption * electricRate;
+            if (electricConsumptionEl) electricConsumptionEl.textContent = electricConsumption.toFixed(2);
+            if (electricCostEl) electricCostEl.textContent = electricCost.toFixed(2);
+        } else {
+            if (electricConsumptionEl) electricConsumptionEl.textContent = '0';
+            if (electricCostEl) electricCostEl.textContent = '0';
+        }
+
+        const month = document.getElementById('bill-month')?.value;
+        adminApp.cacheRatesForMonth(month, waterRate, electricRate);
+    },
+
+    startTenantSelection: (mode) => {
+        adminApp.tenantSelectionMode = mode;
+        const table = document.getElementById('tenants-table');
+        if (table) table.classList.add('tenant-select-mode');
+        adminApp.clearTenantCheckboxes();
+    },
+
+    bindTenantSelectionHandlers: () => {
+        if (adminApp.tenantsTableBound) return;
+        const tbody = document.getElementById('tenants-tbody');
+        if (!tbody) return;
+
+        tbody.addEventListener('change', (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLInputElement)) return;
+            if (!target.classList.contains('tenant-select')) return;
+
+            if (!adminApp.tenantSelectionMode) {
+                target.checked = false;
+                return;
+            }
+
+            const tenant = adminApp.getTenantFromDataset(target);
+            adminApp.handleTenantSelection(tenant, target);
+        });
+
+        tbody.addEventListener('click', (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (!target.classList.contains('outstanding-link')) return;
+
+            const roomNo = target.dataset.roomNo || '';
+            const name = target.dataset.name || '';
+            if (roomNo) {
+                adminApp.viewTenantBills(roomNo, name || `Room ${roomNo}`);
+            }
+        });
+
+        adminApp.tenantsTableBound = true;
+    },
+
+    clearTenantCheckboxes: () => {
+        document.querySelectorAll('.tenant-select').forEach(input => {
+            input.checked = false;
+        });
+    },
+
+    exitTenantSelection: () => {
+        adminApp.tenantSelectionMode = null;
+        const table = document.getElementById('tenants-table');
+        if (table) table.classList.remove('tenant-select-mode');
+        adminApp.clearTenantCheckboxes();
+    },
+
+    handleTenantSelection: (tenant, checkboxEl) => {
+        if (!adminApp.tenantSelectionMode || !checkboxEl?.checked || !tenant) return;
+
+        document.querySelectorAll('.tenant-select').forEach(input => {
+            if (input !== checkboxEl) input.checked = false;
+        });
+
+        if (adminApp.tenantSelectionMode === 'edit') {
+            adminApp.editTenant(tenant);
+            adminApp.exitTenantSelection();
+            return;
+        }
+
+        if (adminApp.tenantSelectionMode === 'remove') {
+            adminApp.removeTenant(tenant.id, tenant.roomNo);
+            adminApp.exitTenantSelection();
+        }
+    },
+
     applyTheme: () => {
         const theme = localStorage.getItem('bh_theme') || 'dark';
         document.body.classList.toggle('theme-light', theme === 'light');
         adminApp.updateThemeButton(theme);
+    },
+
+    init: () => {
+        adminApp.applyTheme();
+        adminApp.restoreSession();
+        adminApp.bindReportTypeHandler();
+    },
+
+    showAdmin: () => {
+        document.getElementById('admin-login').classList.add('hidden');
+        document.getElementById('admin-dash').classList.remove('hidden');
+        adminApp.showView('dashboard');
+        adminApp.setupDashboardRealtime();
+
+        // Load data with error handling
+        setTimeout(() => {
+            adminApp.loadDashboard().catch(e => console.error('Dashboard error:', e));
+            adminApp.loadTenants().catch(e => console.error('Tenants error:', e));
+            adminApp.loadBilling().catch(e => console.error('Billing error:', e));
+            adminApp.loadTickets().catch(e => console.error('Tickets error:', e));
+            adminApp.loadAnnouncements().catch(e => console.error('Announcements error:', e));
+        }, 100);
+    },
+
+    showLogin: () => {
+        document.getElementById('admin-login').classList.remove('hidden');
+        document.getElementById('admin-dash').classList.add('hidden');
+    },
+
+    restoreSession: () => {
+        const raw = localStorage.getItem(adminApp.SESSION_KEY);
+        if (!raw) {
+            adminApp.showLogin();
+            return;
+        }
+
+        try {
+            const session = JSON.parse(raw);
+            const age = Date.now() - Number(session.loginTime || 0);
+            if (age > adminApp.SESSION_TTL_MS) {
+                localStorage.removeItem(adminApp.SESSION_KEY);
+                adminApp.showLogin();
+                return;
+            }
+            adminApp.showAdmin();
+        } catch (e) {
+            console.warn('Admin session restore failed:', e);
+            localStorage.removeItem(adminApp.SESSION_KEY);
+            adminApp.showLogin();
+        }
     },
 
     toggleTheme: () => {
@@ -56,24 +338,143 @@ const adminApp = {
         rows: [],
         summary: {}
     },
+
+    reportTypeBound: false,
+
+    bindReportTypeHandler: () => {
+        if (adminApp.reportTypeBound) return;
+        const reportType = document.getElementById('report-type');
+        if (!reportType) return;
+
+        reportType.addEventListener('change', () => {
+            adminApp.updateReportRangeUI();
+        });
+        adminApp.reportTypeBound = true;
+    },
+
+    updateReportRangeUI: () => {
+        const type = document.getElementById('report-type')?.value || 'owner';
+        const startInput = document.getElementById('report-start');
+        const endInput = document.getElementById('report-end');
+        if (!endInput) return;
+
+        const disableEnd = type === 'meter-readings';
+        endInput.disabled = disableEnd;
+        endInput.style.opacity = disableEnd ? '0.6' : '1';
+        endInput.style.cursor = disableEnd ? 'not-allowed' : 'auto';
+        if (disableEnd) {
+            if (startInput && !startInput.value && endInput.value) {
+                startInput.value = endInput.value;
+            }
+            endInput.value = '';
+        }
+    },
     
     login: () => {
         const pass = document.getElementById('admin-pass').value;
         if(pass === adminApp.ADMIN_PASSWORD) {
-            document.getElementById('admin-login').classList.add('hidden');
-            document.getElementById('admin-dash').classList.remove('hidden');
-            adminApp.showView('dashboard');
-            
-            // Load data with error handling
-            setTimeout(() => {
-                adminApp.loadDashboard().catch(e => console.error('Dashboard error:', e));
-                adminApp.loadTenants().catch(e => console.error('Tenants error:', e));
-                adminApp.loadBilling().catch(e => console.error('Billing error:', e));
-                adminApp.loadTickets().catch(e => console.error('Tickets error:', e));
-                adminApp.loadAnnouncements().catch(e => console.error('Announcements error:', e));
-            }, 100);
+            localStorage.setItem(adminApp.SESSION_KEY, JSON.stringify({
+                loginTime: Date.now()
+            }));
+            adminApp.showAdmin();
         } else {
             alert("Wrong password");
+        }
+    },
+
+    logout: () => {
+        localStorage.removeItem(adminApp.SESSION_KEY);
+        window.location.reload();
+    },
+
+    setupDashboardRealtime: () => {
+        if (adminApp.dashboardBillsUnsub) return;
+
+        const now = new Date();
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        adminApp.dashboardBillsUnsub = db.collection('soas')
+            .where('month', '==', currentMonth)
+            .where('status', '==', 'unpaid')
+            .onSnapshot((snap) => {
+                adminApp.renderDashboardUnpaidBills(snap);
+            }, (e) => {
+                console.error('Realtime bills error:', e);
+            });
+    },
+
+    renderDashboardUnpaidBills: async (billsSnap) => {
+        const kpiBillsDue = document.getElementById('kpi-bills-due');
+        if (kpiBillsDue) kpiBillsDue.textContent = billsSnap.size;
+
+        const dashboardBills = document.getElementById('dashboard-bills');
+        if (!dashboardBills) return;
+
+        if (!billsSnap.empty) {
+            const previewDocs = billsSnap.docs.slice(0, 3);
+            const previewBills = previewDocs.map(doc => doc.data());
+            const previewRooms = [...new Set(previewBills
+                .map(b => b.roomNo)
+                .filter(room => room !== undefined && room !== null))];
+
+            const nameByRoom = {};
+            if (previewRooms.length) {
+                try {
+                    const tenantsSnap = await db.collection('tenants')
+                        .where('roomNo', 'in', previewRooms)
+                        .get();
+                    tenantsSnap.forEach(doc => {
+                        const data = doc.data();
+                        const roomKey = String(data.roomNo || '').trim();
+                        if (roomKey) nameByRoom[roomKey] = data.name || '';
+                    });
+                } catch (e) {
+                    console.warn('Load tenant names for unpaid bills failed:', e);
+                }
+            }
+
+            let html = '<div style="display:flex; flex-direction:column; gap:0.5rem;">';
+            previewBills.forEach(b => {
+                const roomKey = String(b.roomNo || '').trim();
+                const tenantName = nameByRoom[roomKey];
+                const total = Number(b.totalAmount || 0);
+                html += `<div style="display:flex; justify-content:space-between; padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;">
+                    <span>Room ${roomKey}${tenantName ? ` - ${tenantName}` : ''}</span>
+                    <strong style="color:var(--danger);">₱${total.toFixed(2)}</strong>
+                </div>`;
+            });
+            html += '</div>';
+            dashboardBills.innerHTML = html;
+        } else {
+            dashboardBills.innerHTML = '';
+        }
+    },
+
+    populateReadingRoomOptions: async (selectedRoom) => {
+        const select = document.getElementById('reading-room');
+        if (!select) return;
+
+        select.innerHTML = '<option value="">Loading rooms...</option>';
+
+        try {
+            const snap = await db.collection('tenants').orderBy('roomNo', 'asc').get();
+            if (snap.empty) {
+                select.innerHTML = '<option value="">No rooms found</option>';
+                return;
+            }
+
+            const options = ['<option value="">Select Room</option>'];
+            snap.forEach(doc => {
+                const data = doc.data();
+                const roomNo = String(data.roomNo || '').trim();
+                if (!roomNo) return;
+                const label = adminApp.formatTenantLabel(data.name || '');
+                const selected = selectedRoom && String(selectedRoom) === roomNo ? ' selected' : '';
+                options.push(`<option value="${roomNo}"${selected}>Room ${roomNo} - ${label}</option>`);
+            });
+            select.innerHTML = options.join('');
+        } catch (e) {
+            console.error('Populate rooms error:', e);
+            select.innerHTML = '<option value="">Could not load rooms</option>';
         }
     },
 
@@ -123,6 +524,7 @@ const adminApp = {
             if (!startInput.value) startInput.value = startMonth;
             if (!endInput.value) endInput.value = endMonth;
         }
+        adminApp.updateReportRangeUI();
         adminApp.generateReport();
     },
 
@@ -137,6 +539,26 @@ const adminApp = {
             if (!monthStr) return false;
             if (start && monthStr < start) return false;
             if (end && monthStr > end) return false;
+            return true;
+        };
+
+        const getMonthRange = (monthStr) => {
+            if (!monthStr) return { rangeStart: null, rangeEnd: null };
+            const startDate = new Date(`${monthStr}-01`);
+            const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0, 23, 59, 59, 999);
+            return { rangeStart: startDate, rangeEnd: endDate };
+        };
+
+        const parseReadingDate = (value) => {
+            if (!value) return null;
+            if (value.seconds) return new Date(value.seconds * 1000);
+            const parsed = new Date(value);
+            return parsed.toString() === 'Invalid Date' ? null : parsed;
+        };
+        const inRangeDate = (dateObj, rangeStart, rangeEnd) => {
+            if (!dateObj) return false;
+            if (rangeStart && dateObj < rangeStart) return false;
+            if (rangeEnd && dateObj > rangeEnd) return false;
             return true;
         };
 
@@ -337,6 +759,84 @@ const adminApp = {
                 }
             }
 
+            if (type === 'meter-readings') {
+                const monthStr = start || end;
+                if (!monthStr) {
+                    if (output) output.innerHTML = '<p style="color:var(--text-muted);">Select a month to view meter readings.</p>';
+                    return;
+                }
+                const monthRange = getMonthRange(monthStr);
+                const readingsSnap = await db.collection('meter_readings').get();
+                const readings = readingsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                const tenantByRoom = {};
+                tenants.forEach(t => {
+                    const roomKey = String(t.roomNo || '').trim();
+                    if (!roomKey) return;
+                    tenantByRoom[roomKey] = t.name || '';
+                });
+
+                const rows = readings
+                    .map(r => {
+                        const roomKey = String(r.roomNo || '').trim();
+                        const dateObj = parseReadingDate(r.readingDate);
+                        return {
+                            roomNo: roomKey,
+                            name: tenantByRoom[roomKey] || '',
+                            dateObj,
+                            date: dateObj ? dateObj.toLocaleDateString() : 'N/A',
+                            waterReading: Number(r.waterReading || 0),
+                            electricReading: Number(r.electricReading || 0)
+                        };
+                    })
+                    .filter(r => inRangeDate(r.dateObj, monthRange.rangeStart, monthRange.rangeEnd))
+                    .sort((a, b) => {
+                        const aTime = a.dateObj ? a.dateObj.getTime() : 0;
+                        const bTime = b.dateObj ? b.dateObj.getTime() : 0;
+                        return bTime - aTime;
+                    });
+
+                adminApp.reportCache.rows = rows.map(r => ({
+                    roomNo: r.roomNo,
+                    name: r.name,
+                    date: r.date,
+                    waterReading: r.waterReading,
+                    electricReading: r.electricReading
+                }));
+                adminApp.reportCache.summary = {};
+
+                if (output) {
+                    if (!rows.length) {
+                        output.innerHTML = '<p style="color:var(--text-muted);">No meter readings found for the selected month.</p>';
+                        return;
+                    }
+                    output.innerHTML = `
+                        <table class="report-table">
+                            <thead>
+                                <tr>
+                                    <th>Room</th>
+                                    <th>Tenant</th>
+                                    <th>Date</th>
+                                    <th>Water Reading</th>
+                                    <th>Electric Reading</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows.map(r => `
+                                    <tr>
+                                        <td>${r.roomNo || '-'}</td>
+                                        <td>${(typeof Security !== 'undefined' && Security.sanitizeText) ? Security.sanitizeText(r.name) : r.name}</td>
+                                        <td>${r.date}</td>
+                                        <td>${r.waterReading.toFixed(2)}</td>
+                                        <td>${r.electricReading.toFixed(2)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                }
+            }
+
             if (type === 'rent-roll') {
                 const billsByRoom = new Map();
                 bills.forEach(b => {
@@ -407,6 +907,7 @@ const adminApp = {
         if (type === 'rental-history') headers = ['Room', 'Months Billed', 'Total Billed', 'Total Paid', 'Last Status'];
         if (type === 'screening') headers = ['Name', 'Room', 'Email', 'Phone'];
         if (type === 'rent-roll') headers = ['Name', 'Room', 'Rent', 'Status', 'Due Date'];
+        if (type === 'meter-readings') headers = ['Room', 'Tenant', 'Date', 'Water Reading', 'Electric Reading'];
 
         const csvRows = [headers.join(',')];
         rows.forEach(r => {
@@ -423,6 +924,9 @@ const adminApp = {
                 }
                 if (type === 'rent-roll') {
                     return [r.name, r.roomNo, r.rent, r.status, r.dueDate][headers.indexOf(h)];
+                }
+                if (type === 'meter-readings') {
+                    return [r.roomNo, r.name, r.date, r.waterReading, r.electricReading][headers.indexOf(h)];
                 }
                 return r[key] ?? '';
             });
@@ -454,20 +958,10 @@ const adminApp = {
             const kpiOccupied = document.getElementById('kpi-occupied');
             if (kpiOccupied) kpiOccupied.textContent = totalRooms;
             
-            // For vacant rooms, you'd need to track total capacity
-            // For now, just show a placeholder
+            // Vacant rooms based on total capacity
+            const totalCapacity = typeof TOTAL_ROOMS !== 'undefined' ? TOTAL_ROOMS : 28;
             const kpiVacant = document.getElementById('kpi-vacant');
-            if (kpiVacant) kpiVacant.textContent = '-';
-            
-            // Bills due this month
-            const now = new Date();
-            const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-            const billsSnap = await db.collection('soas')
-                .where('month', '==', currentMonth)
-                .where('status', '==', 'unpaid')
-                .get();
-            const kpiBillsDue = document.getElementById('kpi-bills-due');
-            if (kpiBillsDue) kpiBillsDue.textContent = billsSnap.size;
+            if (kpiVacant) kpiVacant.textContent = Math.max(0, totalCapacity - totalRooms);
             
             // Open tickets
             const ticketsSnap = await db.collection('tickets')
@@ -475,46 +969,18 @@ const adminApp = {
                 .get();
             const kpiTickets = document.getElementById('kpi-tickets');
             if (kpiTickets) kpiTickets.textContent = ticketsSnap.size;
-            
-            // Recent tenants
-            const recentTenants = tenantsSnap.docs.slice(0, 3);
-            const dashboardTenants = document.getElementById('dashboard-tenants');
-            if (dashboardTenants) {
-                if (recentTenants.length > 0) {
-                    let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
-                    recentTenants.forEach(doc => {
-                        const t = doc.data();
-                        html += `<div style=\"display:flex; justify-content:space-between; padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
-                            <strong>${t.name}</strong>
-                            <span style=\"color:var(--text-muted);\">Room ${t.roomNo}</span>
-                        </div>`;
-                    });
-                    html += '</div>';
-                    dashboardTenants.innerHTML = html;
-                } else {
-                    dashboardTenants.innerHTML = 'No tenants yet';
-                }
-            }
-            
-            // Unpaid bills
-            const dashboardBills = document.getElementById('dashboard-bills');
-            if (dashboardBills) {
-                if (!billsSnap.empty) {
-                    let html = '<div style=\"display:flex; flex-direction:column; gap:0.5rem;\">';
-                    billsSnap.docs.slice(0, 3).forEach(doc => {
-                        const b = doc.data();
-                        html += `<div style=\"display:flex; justify-content:space-between; padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
-                            <span>Room ${b.roomNo}</span>
-                            <strong style=\"color:var(--danger);\">₱${b.totalAmount}</strong>
-                        </div>`;
-                    });
-                    html += '</div>';
-                    dashboardBills.innerHTML = html;
-                } else {
-                    dashboardBills.innerHTML = 'All caught up! 🎉';
-                }
-            }
-            
+
+            const unpaidSnap = await db.collection('soas')
+                .where('status', '==', 'unpaid')
+                .get();
+            let totalOutstanding = 0;
+            unpaidSnap.forEach(doc => {
+                const data = doc.data();
+                totalOutstanding += Number(data.totalAmount || 0);
+            });
+            const kpiOutstanding = document.getElementById('kpi-outstanding');
+            if (kpiOutstanding) kpiOutstanding.textContent = `₱${totalOutstanding.toFixed(2)}`;
+
             // Open tickets preview
             const dashboardTickets = document.getElementById('dashboard-tickets');
             if (dashboardTickets) {
@@ -523,14 +989,14 @@ const adminApp = {
                     ticketsSnap.docs.slice(0, 3).forEach(doc => {
                         const t = doc.data();
                         html += `<div style=\"padding:0.5rem; background:var(--bg-color); border-radius:0.25rem;\">
-                            <div style=\"font-weight:600;\">${t.title || 'Untitled'}</div>
+                            <div style=\"font-weight:600;\">${adminApp.getTicketTitle(t)}</div>
                             <div style=\"font-size:0.75rem; color:var(--text-muted);\">Room ${t.roomNo}</div>
                         </div>`;
                     });
                     html += '</div>';
                     dashboardTickets.innerHTML = html;
                 } else {
-                    dashboardTickets.innerHTML = 'No open tickets 👍';
+                    dashboardTickets.innerHTML = '';
                 }
             }
             
@@ -616,64 +1082,155 @@ const adminApp = {
         const month = document.getElementById('bill-month').value; // Format: "2026-02"
 
         if (!room || !month) {
-            document.getElementById('bill-water-prev').value = '';
             document.getElementById('bill-water-reading').value = '';
-            document.getElementById('bill-electric-prev').value = '';
             document.getElementById('bill-electric-reading').value = '';
             document.getElementById('water-consumption').textContent = '0';
             document.getElementById('electric-consumption').textContent = '0';
             document.getElementById('water-cost').textContent = '0';
             document.getElementById('electric-cost').textContent = '0';
+
+            if (room) {
+                try {
+                    const roomKey = String(room).trim();
+                    const roomNum = Number(roomKey);
+                    const billQueries = [
+                        db.collection('soas').where('roomNo', '==', roomKey).get()
+                    ];
+                    if (Number.isFinite(roomNum)) {
+                        billQueries.push(db.collection('soas').where('roomNo', '==', roomNum).get());
+                    }
+                    const billSnaps = await Promise.all(billQueries);
+                    const billDocs = [];
+                    const billIds = new Set();
+                    billSnaps.forEach(snap => {
+                        snap.forEach(doc => {
+                            if (billIds.has(doc.id)) return;
+                            billIds.add(doc.id);
+                            billDocs.push(doc);
+                        });
+                    });
+
+                    const latestBill = billDocs.length
+                        ? billDocs
+                            .map(doc => doc.data())
+                            .filter(b => b.month)
+                            .sort((a, b) => String(b.month).localeCompare(String(a.month)))[0]
+                        : null;
+
+                    if (latestBill) {
+                        document.getElementById('bill-water-prev').value = Number(latestBill.waterReading || 0);
+                        document.getElementById('bill-electric-prev').value = Number(latestBill.electricReading || 0);
+                    } else {
+                        document.getElementById('bill-water-prev').value = '';
+                        document.getElementById('bill-electric-prev').value = '';
+                    }
+                } catch (e) {
+                    console.warn('Load previous bill readings failed:', e);
+                    document.getElementById('bill-water-prev').value = '';
+                    document.getElementById('bill-electric-prev').value = '';
+                }
+            } else {
+                document.getElementById('bill-water-prev').value = '';
+                document.getElementById('bill-electric-prev').value = '';
+            }
+
+            adminApp.loadRatesForMonth(month);
             return;
         }
 
         try {
-            // Calculate previous month
-            const [year, monthNum] = month.split('-');
-            const prevMonth = parseInt(monthNum) - 1;
-            let prevYear = parseInt(year);
-            let prevMonthStr = prevMonth.toString().padStart(2, '0');
-            
-            if (prevMonth === 0) {
-                prevYear--;
-                prevMonthStr = '12';
+            adminApp.loadRatesForMonth(month);
+            const rates = adminApp.getBillRates();
+            // Query all meter readings for this room (string/number roomNo support)
+            const roomKey = String(room).trim();
+            const roomNum = Number(roomKey);
+            const readingQueries = [
+                db.collection('meter_readings').where('roomNo', '==', roomKey).get()
+            ];
+            if (Number.isFinite(roomNum)) {
+                readingQueries.push(db.collection('meter_readings').where('roomNo', '==', roomNum).get());
             }
-            
-            const prevMonthStr_full = `${prevYear}-${prevMonthStr}`;
+            const readingSnaps = await Promise.all(readingQueries);
+            const readingDocs = [];
+            const readingIds = new Set();
+            readingSnaps.forEach(snap => {
+                snap.forEach(doc => {
+                    if (readingIds.has(doc.id)) return;
+                    readingIds.add(doc.id);
+                    readingDocs.push(doc);
+                });
+            });
 
-            // Query all meter readings for this room
-            const readingsSnap = await db.collection('meter_readings')
-                .where('roomNo', '==', room)
-                .get();
+            const billQueries = [
+                db.collection('soas').where('roomNo', '==', roomKey).get()
+            ];
+            if (Number.isFinite(roomNum)) {
+                billQueries.push(db.collection('soas').where('roomNo', '==', roomNum).get());
+            }
+            const billSnaps = await Promise.all(billQueries);
+            const billDocs = [];
+            const billIds = new Set();
+            billSnaps.forEach(snap => {
+                snap.forEach(doc => {
+                    if (billIds.has(doc.id)) return;
+                    billIds.add(doc.id);
+                    billDocs.push(doc);
+                });
+            });
 
-            if (readingsSnap.empty) {
-                alert(`No meter reading found for Room ${room}. Please add it first.`);
-                document.getElementById('bill-water-prev').value = '0';
+            const prevBill = billDocs.length === 0
+                ? null
+                : billDocs
+                    .map(doc => doc.data())
+                    .filter(b => b.month)
+                    .sort((a, b) => String(b.month).localeCompare(String(a.month)))[0];
+            const prevBillWater = prevBill ? Number(prevBill.waterReading || 0) : null;
+            const prevBillElectric = prevBill ? Number(prevBill.electricReading || 0) : null;
+
+            if (!readingDocs.length) {
+                document.getElementById('bill-water-prev').value = prevBillWater !== null ? prevBillWater : 0;
                 document.getElementById('bill-water-reading').value = '';
-                document.getElementById('bill-electric-prev').value = '0';
+                document.getElementById('bill-electric-prev').value = prevBillElectric !== null ? prevBillElectric : 0;
                 document.getElementById('bill-electric-reading').value = '';
+                adminApp.updateRatePreview();
                 return;
             }
 
             // Filter and sort readings
-            const allReadings = readingsSnap.docs
+            const allReadings = readingDocs
                 .map(doc => ({ ...doc.data(), docId: doc.id }))
                 .filter(r => r.readingDate)
                 .sort((a, b) => new Date(b.readingDate) - new Date(a.readingDate));
 
             // Find current month reading
-            const currentReading = allReadings.find(r => r.readingDate.startsWith(month));
-            
-            // Find previous month reading
-            const previousReading = allReadings.find(r => r.readingDate.startsWith(prevMonthStr_full));
+            const currentReading = adminApp.findCurrentReadingForMonth(allReadings, month);
+
+            // Find most recent reading before the current one
+            const previousReading = adminApp.findPreviousReading(allReadings, currentReading);
+            const monthStart = new Date(`${month}-01`);
 
             if (!currentReading) {
-                alert(`No meter reading found for Room ${room} in ${month}. Please add it first.`);
+                const fallbackPrev = allReadings.find(r => new Date(r.readingDate) < monthStart) || allReadings[0] || null;
+                const prevWater = prevBillWater !== null
+                    ? prevBillWater
+                    : (fallbackPrev ? (fallbackPrev.waterReading || 0) : 0);
+                const prevElectric = prevBillElectric !== null
+                    ? prevBillElectric
+                    : (fallbackPrev ? (fallbackPrev.electricReading || 0) : 0);
+                document.getElementById('bill-water-prev').value = prevWater;
+                document.getElementById('bill-water-reading').value = '';
+                document.getElementById('bill-electric-prev').value = prevElectric;
+                document.getElementById('bill-electric-reading').value = '';
+                adminApp.updateRatePreview();
                 return;
             }
 
-            const prevWater = previousReading ? (previousReading.waterReading || 0) : 0;
-            const prevElectric = previousReading ? (previousReading.electricReading || 0) : 0;
+            const prevWater = prevBillWater !== null
+                ? prevBillWater
+                : (previousReading ? (previousReading.waterReading || 0) : 0);
+            const prevElectric = prevBillElectric !== null
+                ? prevBillElectric
+                : (previousReading ? (previousReading.electricReading || 0) : 0);
             const currWater = currentReading.waterReading || 0;
             const currElectric = currentReading.electricReading || 0;
 
@@ -682,8 +1239,8 @@ const adminApp = {
             const electricConsumption = Math.max(0, currElectric - prevElectric);
 
             // Calculate costs
-            const waterCost = waterConsumption * UNIT_PRICES.water;
-            const electricCost = electricConsumption * UNIT_PRICES.electric;
+            const waterCost = waterConsumption * rates.waterRate;
+            const electricCost = electricConsumption * rates.electricRate;
 
             // Populate fields
             document.getElementById('bill-water-prev').value = prevWater;
@@ -694,8 +1251,8 @@ const adminApp = {
             // Update display
             document.getElementById('water-consumption').textContent = waterConsumption.toFixed(2);
             document.getElementById('electric-consumption').textContent = electricConsumption.toFixed(2);
-            document.getElementById('water-rate').textContent = UNIT_PRICES.water;
-            document.getElementById('electric-rate').textContent = UNIT_PRICES.electric;
+            document.getElementById('water-rate').textContent = rates.waterRate.toFixed(2);
+            document.getElementById('electric-rate').textContent = rates.electricRate.toFixed(2);
             document.getElementById('water-cost').textContent = waterCost.toFixed(2);
             document.getElementById('electric-cost').textContent = electricCost.toFixed(2);
 
@@ -712,10 +1269,13 @@ const adminApp = {
         const rental = parseFloat(document.getElementById('bill-rental').value) || 0;
         const currentWaterReading = parseFloat(document.getElementById('bill-water-reading').value);
         const currentElectricReading = parseFloat(document.getElementById('bill-electric-reading').value);
+        const prevWaterReading = parseFloat(document.getElementById('bill-water-prev').value);
+        const prevElectricReading = parseFloat(document.getElementById('bill-electric-prev').value);
         const due = document.getElementById('bill-due').value;
+        const rates = adminApp.getBillRates();
 
         if(!room || !month) return alert("Room and Month are required");
-        if(isNaN(currentWaterReading) || isNaN(currentElectricReading)) return alert("Please fetch meter readings first (select Room and Month)");
+        if(isNaN(currentWaterReading) || isNaN(currentElectricReading)) return alert("Please enter current water and electric readings");
 
         try {
             // Get all readings for this room
@@ -727,40 +1287,28 @@ const adminApp = {
             let electricConsumption = 0;
 
             if (!allReadingsSnap.empty) {
-                // Calculate previous month
-                const [year, monthNum] = month.split('-');
-                const prevMonth = parseInt(monthNum) - 1;
-                let prevYear = parseInt(year);
-                let prevMonthStr = prevMonth.toString().padStart(2, '0');
-                
-                if (prevMonth === 0) {
-                    prevYear--;
-                    prevMonthStr = '12';
-                }
-                
-                const prevMonthStr_full = `${prevYear}-${prevMonthStr}`;
-
-                // Filter and sort readings to find previous month's reading
                 const allReadings = allReadingsSnap.docs
                     .map(doc => doc.data())
                     .filter(r => r.readingDate)
                     .sort((a, b) => new Date(b.readingDate) - new Date(a.readingDate));
 
-                // Find the most recent reading from previous month
-                const prevReading = allReadings.find(r => r.readingDate.startsWith(prevMonthStr_full));
+                const currentReading = adminApp.findCurrentReadingForMonth(allReadings, month);
+                const prevReading = adminApp.findPreviousReading(allReadings, currentReading);
 
-                if (prevReading) {
-                    waterConsumption = currentWaterReading - (prevReading.waterReading || 0);
-                    electricConsumption = currentElectricReading - (prevReading.electricReading || 0);
-                } else {
-                    // If no previous reading, use current reading as consumption (first month)
-                    waterConsumption = currentWaterReading;
-                    electricConsumption = currentElectricReading;
-                }
+                const effectivePrevWater = Number.isFinite(prevWaterReading)
+                    ? prevWaterReading
+                    : (prevReading ? (prevReading.waterReading || 0) : 0);
+                const effectivePrevElectric = Number.isFinite(prevElectricReading)
+                    ? prevElectricReading
+                    : (prevReading ? (prevReading.electricReading || 0) : 0);
+
+                waterConsumption = currentWaterReading - effectivePrevWater;
+                electricConsumption = currentElectricReading - effectivePrevElectric;
             } else {
-                // If no previous reading, use current reading as consumption (first month)
-                waterConsumption = currentWaterReading;
-                electricConsumption = currentElectricReading;
+                const effectivePrevWater = Number.isFinite(prevWaterReading) ? prevWaterReading : 0;
+                const effectivePrevElectric = Number.isFinite(prevElectricReading) ? prevElectricReading : 0;
+                waterConsumption = currentWaterReading - effectivePrevWater;
+                electricConsumption = currentElectricReading - effectivePrevElectric;
             }
 
             // Ensure consumption is not negative
@@ -768,8 +1316,8 @@ const adminApp = {
             electricConsumption = Math.max(0, electricConsumption);
 
             // Calculate costs
-            const waterAmount = waterConsumption * UNIT_PRICES.water;
-            const electricAmount = electricConsumption * UNIT_PRICES.electric;
+            const waterAmount = waterConsumption * rates.waterRate;
+            const electricAmount = electricConsumption * rates.electricRate;
             const total = rental + waterAmount + electricAmount;
 
             // Save bill
@@ -780,15 +1328,19 @@ const adminApp = {
                 waterReading: currentWaterReading,
                 waterConsumption: waterConsumption,
                 waterAmount: waterAmount,
+                waterRate: rates.waterRate,
                 electricReading: currentElectricReading,
                 electricConsumption: electricConsumption,
                 electricAmount: electricAmount,
+                electricRate: rates.electricRate,
                 totalAmount: total,
                 dueDate: due,
                 status: "unpaid"
             });
 
-            alert(`Bill sent to Room ${room}!\nBreakdown:\nRental: ${rental}\nWater (${waterConsumption}m³): ${waterAmount}\nElectric (${electricConsumption}kWh): ${electricAmount}\nTotal: ${total}`);
+            adminApp.cacheRatesForMonth(month, rates.waterRate, rates.electricRate);
+
+            alert(`Bill sent to Room ${room}!\nBreakdown:\nRental: ${rental}\nWater (${waterConsumption}m³ @ ₱${rates.waterRate}/m³): ${waterAmount}\nElectric (${electricConsumption}kWh @ ₱${rates.electricRate}/kWh): ${electricAmount}\nTotal: ${total}`);
             
             // Close modal and clear form
             adminApp.closeBillModal();
@@ -801,15 +1353,29 @@ const adminApp = {
     // 2.5 Load Tenants
     loadTenants: async () => {
         const tbody = document.getElementById('tenants-tbody');
-        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Loading tenants…</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Loading tenants…</td></tr>';
+        adminApp.exitTenantSelection();
+        adminApp.bindTenantSelectionHandlers();
         
         try {
             const snap = await db.collection('tenants').orderBy('roomNo', 'asc').get();
             
             if (snap.empty) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">No tenants yet. Add your first tenant to get started.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No tenants yet. Add your first tenant to get started.</td></tr>';
                 return;
             }
+
+            const unpaidSnap = await db.collection('soas')
+                .where('status', '==', 'unpaid')
+                .get();
+            const outstandingByRoom = {};
+            unpaidSnap.forEach(doc => {
+                const data = doc.data();
+                const room = String(data.roomNo || '').trim();
+                if (!room) return;
+                const amount = Number(data.totalAmount || 0);
+                outstandingByRoom[room] = (outstandingByRoom[room] || 0) + amount;
+            });
 
             let tableHtml = '';
             snap.forEach(doc => {
@@ -820,21 +1386,33 @@ const adminApp = {
                 const email = data.email || '';
                 const phone = data.phone || '';
                 const pin = data.pin || '';
+                const idAttr = adminApp.escapeAttr(id);
+                const nameAttr = adminApp.escapeAttr(name);
+                const roomAttr = adminApp.escapeAttr(roomNo);
+                const emailAttr = adminApp.escapeAttr(email);
+                const phoneAttr = adminApp.escapeAttr(phone);
+                const pinAttr = adminApp.escapeAttr(pin);
+                const outstanding = Number(outstandingByRoom[String(roomNo).trim()] || 0);
+                const outstandingDisplay = outstanding > 0
+                    ? `<button type="button" class="btn-action muted outstanding-link" data-room-no="${roomAttr}" data-name="${nameAttr}">₱${outstanding.toFixed(2)}</button>`
+                    : '-';
                 tableHtml += `<tr>
+                    <td class="tenant-select-cell">
+                        <input type="checkbox" class="tenant-select" data-tenant-id="${idAttr}" data-tenant-name="${nameAttr}" data-tenant-room-no="${roomAttr}" data-tenant-email="${emailAttr}" data-tenant-phone="${phoneAttr}" data-tenant-pin="${pinAttr}">
+                    </td>
                     <td>${name}</td>
                     <td>${roomNo}</td>
+                    <td>${outstandingDisplay}</td>
                     <td>
                         <button onclick="adminApp.openBillModal('${roomNo}')" class="btn-action primary">🧾 Bill</button>
                         <button onclick="adminApp.viewTenantBills('${roomNo}', '${name}')" class="btn-action success">💰 History</button>
-                        <button onclick='adminApp.editTenant(${JSON.stringify({id, name, roomNo, email, phone, pin})})' class="btn-action warning">✏️ Edit</button>
-                        <button onclick="adminApp.removeTenant('${id}', '${roomNo}')" class="btn-action danger">🗑 Remove</button>
                     </td>
                 </tr>`;
             });
             tbody.innerHTML = tableHtml;
         } catch (e) {
             console.error(e);
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:red;">Could not load tenants right now.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:red;">Could not load tenants right now.</td></tr>';
         }
     },
 
@@ -842,12 +1420,36 @@ const adminApp = {
     openBillModal: (roomNo) => {
         document.getElementById('bill-modal').style.display = 'flex';
         document.getElementById('bill-room').value = roomNo;
+        const tenantRoomField = document.getElementById('bill-tenant-room');
+        if (tenantRoomField) tenantRoomField.value = '';
         // Clear other fields
         document.getElementById('bill-month').value = '';
         document.getElementById('bill-rental').value = '';
         document.getElementById('bill-water-reading').value = '';
         document.getElementById('bill-electric-reading').value = '';
         document.getElementById('bill-due').value = '';
+        adminApp.applyBillRates(UNIT_PRICES.water, UNIT_PRICES.electric);
+        adminApp.updateRatePreview();
+        adminApp.fetchReadings();
+
+        if (tenantRoomField) {
+            db.collection('tenants')
+                .where('roomNo', '==', roomNo)
+                .limit(1)
+                .get()
+                .then((snap) => {
+                    if (!snap.empty) {
+                        const data = snap.docs[0].data();
+                        const name = data.name || '';
+                        const roomLabel = String(roomNo || '').trim();
+                        tenantRoomField.value = name ? `${name} - Room ${roomLabel}` : `Room ${roomLabel}`;
+                        return;
+                    }
+                    const roomLabel = String(roomNo || '').trim();
+                    tenantRoomField.value = `Room ${roomLabel}`;
+                })
+                .catch((e) => console.error('Load tenant name error:', e));
+        }
     },
 
     // Close Bill Modal
@@ -1105,6 +1707,14 @@ const adminApp = {
         
         try {
             const snap = await db.collection('soas').orderBy('month', 'desc').get();
+            const tenantsSnap = await db.collection('tenants').get();
+            const tenantByRoom = {};
+            tenantsSnap.forEach(doc => {
+                const data = doc.data();
+                const roomKey = String(data.roomNo || '').trim();
+                if (!roomKey) return;
+                tenantByRoom[roomKey] = data.name || '';
+            });
             
             if (snap.empty) {
                 container.innerHTML = '<p>No bills yet. Create one from the tenant list.</p>';
@@ -1127,14 +1737,25 @@ const adminApp = {
                 const actionButton = status === 'paid'
                     ? `<button onclick="adminApp.updateBillStatus('${id}', 'unpaid')" class="btn-action danger">Mark Unpaid</button>`
                     : `<button onclick="adminApp.showPaymentTypeModal('${id}')" class="btn-action success">✓ Mark Paid</button>`;
+                const receiptButtons = `
+                    <button onclick="adminApp.viewReceipt('${id}')" class="btn-action secondary">👁️ Receipt</button>
+                    <button onclick="adminApp.downloadReceipt('${id}')" class="btn-action primary">⬇️ Receipt</button>
+                `;
 
-                const paymentTypeDisplay = paymentType ? `<span style="color:var(--text-muted); margin-left:10px; padding:2px 8px; background:#f0f0f0; border-radius:4px; font-size:0.85rem;">${paymentIcon} ${paymentLabel}</span>` : '';
+                const paymentTypeDisplay = (status === 'paid' && paymentType)
+                    ? `<span style="color:var(--text-muted); margin-left:10px; padding:2px 8px; background:#f0f0f0; border-radius:4px; font-size:0.85rem;">${paymentIcon} ${paymentLabel}</span>`
+                    : '';
+                const roomKey = String(data.roomNo || '').trim();
+                const tenantName = tenantByRoom[roomKey] || '';
+                const waterConsumption = Number(data.waterConsumption || 0);
+                const electricConsumption = Number(data.electricConsumption || 0);
 
                 html += `
                     <div style="border: 1px solid var(--border); border-left: 5px solid ${statusColor}; padding: 15px; border-radius: 8px; background: white;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                             <div>
-                                <strong style="font-size:1.1rem;">Room ${data.roomNo}</strong>
+                                <strong style="font-size:1.1rem;">Room ${roomKey || data.roomNo}</strong>
+                                ${tenantName ? `<span style="color:var(--text-muted); margin-left:10px;">${tenantName}</span>` : ''}
                                 <span style="color:var(--text-muted); margin-left:10px;">${data.month}</span>
                                 ${paymentTypeDisplay}
                             </div>
@@ -1147,11 +1768,11 @@ const adminApp = {
                             </div>
                             <div>
                                 <small style="color:var(--text-muted);">Water</small>
-                                <div>₱${data.waterAmount || 0}</div>
+                                <div>₱${data.waterAmount || 0} <span style="color:var(--text-muted); font-size:0.75rem;">(${waterConsumption.toFixed(2)} m³)</span></div>
                             </div>
                             <div>
                                 <small style="color:var(--text-muted);">Electric</small>
-                                <div>₱${data.electricAmount || 0}</div>
+                                <div>₱${data.electricAmount || 0} <span style="color:var(--text-muted); font-size:0.75rem;">(${electricConsumption.toFixed(2)} kWh)</span></div>
                             </div>
                         </div>
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
@@ -1160,6 +1781,7 @@ const adminApp = {
                                 <small style="color:red; display:block; margin-top:2px;">Due: ${data.dueDate || 'N/A'}</small>
                             </div>
                             <div>
+                                ${receiptButtons}
                                 ${actionButton}
                                 <button onclick='adminApp.editBill(${JSON.stringify({id, ...data})})' class="btn-action warning">✏️ Edit</button>
                                 <button onclick="adminApp.deleteBill('${id}', '${data.roomNo}', '${data.month}')" class="btn-action muted">🗑 Delete</button>
@@ -1174,6 +1796,82 @@ const adminApp = {
         } catch(e) { 
             console.error(e);
             container.innerHTML = '<p>Could not load bills right now.</p>'; 
+        }
+    },
+
+    viewReceipt: async (billId) => {
+        if (!billId) return;
+
+        try {
+            const billDoc = await db.collection('soas').doc(billId).get();
+            if (!billDoc.exists) {
+                alert('Receipt not found.');
+                return;
+            }
+
+            const bill = {
+                id: billDoc.id,
+                ...billDoc.data()
+            };
+
+            let tenantName = 'Tenant';
+            try {
+                const tenantDoc = await db.collection('tenants')
+                    .where('roomNo', '==', bill.roomNo)
+                    .limit(1)
+                    .get();
+                if (!tenantDoc.empty) tenantName = tenantDoc.docs[0].data().name || tenantName;
+            } catch (e) {
+                console.log('Could not fetch tenant name:', e);
+            }
+
+            if (typeof receipt !== 'undefined' && receipt.openReceipt) {
+                receipt.openReceipt(bill, { name: tenantName, roomNo: bill.roomNo });
+                return;
+            }
+
+            alert('Receipt module is not available.');
+        } catch (e) {
+            console.error('Error fetching receipt:', e);
+            alert('Error loading receipt.');
+        }
+    },
+
+    downloadReceipt: async (billId) => {
+        if (!billId) return;
+
+        try {
+            const billDoc = await db.collection('soas').doc(billId).get();
+            if (!billDoc.exists) {
+                alert('Receipt not found.');
+                return;
+            }
+
+            const bill = {
+                id: billDoc.id,
+                ...billDoc.data()
+            };
+
+            let tenantName = 'Tenant';
+            try {
+                const tenantDoc = await db.collection('tenants')
+                    .where('roomNo', '==', bill.roomNo)
+                    .limit(1)
+                    .get();
+                if (!tenantDoc.empty) tenantName = tenantDoc.docs[0].data().name || tenantName;
+            } catch (e) {
+                console.log('Could not fetch tenant name:', e);
+            }
+
+            if (typeof receipt !== 'undefined' && receipt.downloadAsHTML) {
+                receipt.downloadAsHTML(bill, { name: tenantName, roomNo: bill.roomNo });
+                return;
+            }
+
+            alert('Receipt module is not available.');
+        } catch (e) {
+            console.error('Error downloading receipt:', e);
+            alert('Error downloading receipt.');
         }
     },
 
@@ -1304,6 +2002,11 @@ const adminApp = {
                 const isResolved = data.status === 'resolved';
                 const statusColor = isResolved ? 'green' : 'red';
                 const statusText = isResolved ? '✅ Solved' : '🔥 Open';
+                const rawMessage = data.message || data.description || '';
+                const safeMessage = (typeof Security !== 'undefined' && Security.sanitizeText)
+                    ? Security.sanitizeText(rawMessage)
+                    : rawMessage;
+                const safeMessageHtml = safeMessage.replace(/\n/g, '<br>');
 
                 // Only show buttons if the ticket is NOT resolved yet
                 const actionButtons = isResolved 
@@ -1328,7 +2031,7 @@ const adminApp = {
                         <div style="margin-top:6px;">
                             ${data.acknowledged ? '<small style="color:var(--success); font-weight:600">Acknowledged</small>' : ''}
                         </div>
-                        <p style="margin: 10px 0;">${data.message || data.description || ''}</p>
+                        <p style="margin: 10px 0;">${safeMessageHtml}</p>
                         <div style="display:flex; justify-content:space-between; align-items:end;">
                             <small style="color:grey">${dateStr}</small>
                             <div>${actionButtons}</div>
@@ -1366,7 +2069,7 @@ const adminApp = {
     },
 
     // Open Add Reading Modal
-    openAddReadingModal: () => {
+    openAddReadingModal: (roomNo) => {
         document.getElementById('add-reading-modal').style.display = 'flex';
         // Set today's date as default
         const today = new Date().toISOString().split('T')[0];
@@ -1375,6 +2078,7 @@ const adminApp = {
         document.getElementById('reading-room').value = '';
         document.getElementById('reading-water').value = '';
         document.getElementById('reading-electric').value = '';
+        adminApp.populateReadingRoomOptions(roomNo);
     },
 
     // Close Add Reading Modal
@@ -1396,10 +2100,15 @@ const adminApp = {
     },
 
     // Open readings modal
-    openReadingsModal: () => {
+    openReadingsModal: (roomNo) => {
         document.getElementById('readings-modal').style.display = 'flex';
         if (!adminApp.allReadings) {
             adminApp.loadReadings();
+        }
+        const filterSelect = document.getElementById('readings-filter-room');
+        if (filterSelect) {
+            filterSelect.value = roomNo ? String(roomNo) : '';
+            adminApp.filterReadings();
         }
     },
 
@@ -1425,8 +2134,24 @@ const adminApp = {
                 return;
             }
 
-            // Store all readings globally for filtering
-            adminApp.allReadings = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Store all readings globally for filtering (cleaned and de-duplicated)
+            const rawReadings = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const deduped = new Map();
+
+            rawReadings.forEach(reading => {
+                const roomNo = String(reading.roomNo || '').trim();
+                const readingDate = String(reading.readingDate || '').trim();
+                if (!roomNo || !readingDate) return;
+
+                const key = `${roomNo}|${readingDate}`;
+                const existing = deduped.get(key);
+                if (!existing || adminApp.getReadingTimestamp(reading) > adminApp.getReadingTimestamp(existing)) {
+                    deduped.set(key, { ...reading, roomNo, readingDate });
+                }
+            });
+
+            adminApp.allReadings = Array.from(deduped.values())
+                .sort((a, b) => new Date(b.readingDate) - new Date(a.readingDate));
 
             // Populate room filter dropdown
             if (filterSelect) {
@@ -1494,9 +2219,39 @@ const adminApp = {
         container.innerHTML = html;
     },
 
+    clearAllReadings: async () => {
+        if (!confirm('Delete all meter readings for all tenants? This cannot be undone.')) return;
+
+        const container = document.getElementById('readings-list');
+        if (container) container.innerHTML = 'Clearing all readings...';
+
+        try {
+            const batchSize = 400;
+            let totalDeleted = 0;
+
+            while (true) {
+                const snap = await db.collection('meter_readings').limit(batchSize).get();
+                if (snap.empty) break;
+
+                const batch = db.batch();
+                snap.docs.forEach(doc => batch.delete(doc.ref));
+                await batch.commit();
+                totalDeleted += snap.size;
+            }
+
+            adminApp.allReadings = null;
+            if (container) container.innerHTML = 'No readings yet. Add the first one above.';
+            alert(`Deleted ${totalDeleted} meter readings.`);
+        } catch (e) {
+            console.error(e);
+            if (container) container.innerHTML = 'Could not clear readings right now.';
+            alert('Error clearing readings: ' + e.message);
+        }
+    },
+
     // Save a meter reading from form
     saveReadingFromForm: async () => {
-        const roomNo = document.getElementById('reading-room').value.trim();
+        const roomNo = document.getElementById('reading-room').value;
         const readingDate = document.getElementById('reading-date').value;
         const waterReading = parseFloat(document.getElementById('reading-water').value) || 0;
         const electricReading = parseFloat(document.getElementById('reading-electric').value) || 0;
@@ -1611,4 +2366,4 @@ const adminApp = {
     }
 };
 
-document.addEventListener('DOMContentLoaded', adminApp.applyTheme);
+document.addEventListener('DOMContentLoaded', adminApp.init);

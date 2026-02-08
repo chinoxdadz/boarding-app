@@ -17,7 +17,7 @@
     <section id="admin-login" class="active-screen">
         <div class="login-card">
             <h1>Admin Access</h1>
-            <input type="password" id="admin-pass" placeholder="Admin Password" class="full-width">
+            <input type="password" id="admin-pass" placeholder="Admin Password" class="full-width" autocomplete="current-password">
             <button onclick="adminApp.login()" class="btn-primary full-width" style="margin-top: 1rem;">Enter</button>
             <button onclick="window.location.href='index.html'" class="btn-secondary full-width" style="margin-top: 0.5rem;">← Back to Tenant Portal</button>
         </div>
@@ -36,9 +36,6 @@
                 </a>
                 <a href="#" onclick="adminApp.showView('tenants'); return false;" class="nav-link" data-view="tenants">
                     <span class="nav-icon">👥</span> Tenants
-                </a>
-                <a href="#" onclick="adminApp.showView('readings'); return false;" class="nav-link" data-view="readings">
-                    <span class="nav-icon">📊</span> Meter Readings
                 </a>
                 <a href="#" onclick="adminApp.showView('billing'); return false;" class="nav-link" data-view="billing">
                     <span class="nav-icon">💰</span> Billing
@@ -59,7 +56,7 @@
                 </a>
             </nav>
             <div class="sidebar-footer">
-                <button onclick="location.reload()" class="btn-logout full-width">Logout</button>
+                <button onclick="adminApp.logout()" class="btn-logout full-width">Logout</button>
             </div>
         </div>
 
@@ -83,6 +80,10 @@
                         <div class="kpi-value" id="kpi-vacant">-</div>
                     </div>
                     <div class="kpi-card">
+                        <div class="kpi-label">Total Outstanding</div>
+                        <div class="kpi-value" id="kpi-outstanding">-</div>
+                    </div>
+                    <div class="kpi-card">
                         <div class="kpi-label">Bills Due</div>
                         <div class="kpi-value" id="kpi-bills-due">-</div>
                     </div>
@@ -94,11 +95,6 @@
 
                 <!-- Quick Actions Grid -->
                 <div class="dashboard-grid">
-                    <div class="card">
-                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">Recent Tenants</h3>
-                        <div id="dashboard-tenants" style="font-size: 0.85rem; color: var(--text-muted);">Loading...</div>
-                        <button onclick="adminApp.showView('tenants')" class="btn-secondary full-width" style="margin-top: 0.75rem;">View All Tenants</button>
-                    </div>
                     <div class="card">
                         <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">Unpaid Bills</h3>
                         <div id="dashboard-bills" style="font-size: 0.85rem; color: var(--text-muted);">Loading...</div>
@@ -112,22 +108,35 @@
                 </div>
             </div>
 
+            <!-- Tickets View -->
+            <div id="view-tickets" class="admin-view">
+                <div class="card">
+                    <div id="admin-tickets-list" class="empty-state">Checking for new requests…</div>
+                </div>
+            </div>
+
             <!-- Tenants View -->
             <div id="view-tenants" class="admin-view">
                 <div class="card">
-                    <button onclick="adminApp.openAddTenantModal()" class="btn-primary" style="margin-bottom: 0.75rem;">👥 Add New Tenant</button>
+                    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom: 0.75rem;">
+                        <button onclick="adminApp.openAddTenantModal()" class="btn-primary">👥 Add New Tenant</button>
+                        <button id="tenant-edit-btn" onclick="adminApp.startTenantSelection('edit')" class="btn-secondary">✏️ Edit Tenant Details</button>
+                        <button id="tenant-remove-btn" onclick="adminApp.startTenantSelection('remove')" class="btn-secondary">🗑 Remove Tenant</button>
+                    </div>
                     <div class="tenants-table-container">
-                        <table class="tenants-table">
+                        <table class="tenants-table" id="tenants-table">
                             <thead>
                                 <tr>
+                                    <th class="tenant-select-header"></th>
                                     <th>Name</th>
                                     <th>Room No</th>
+                                    <th>Outstanding</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody id="tenants-tbody">
                                 <tr>
-                                    <td colspan="3" style="text-align:center; color:var(--text-muted);">Loading...</td>
+                                    <td colspan="5" style="text-align:center; color:var(--text-muted);">Loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -135,25 +144,10 @@
                 </div>
             </div>
 
-            <!-- Meter Readings View -->
-            <div id="view-readings" class="admin-view">
-                <div class="card">
-                    <button onclick="adminApp.openAddReadingModal()" class="btn-primary" style="margin-bottom: 0.75rem; margin-right: 0.5rem;">➕ Add Meter Reading</button>
-                    <button onclick="adminApp.openReadingsModal()" class="btn-secondary" style="margin-bottom: 0.75rem;">📄 View All Readings</button>
-                </div>
-            </div>
-
             <!-- Billing View -->
             <div id="view-billing" class="admin-view">
                 <div class="card">
                     <div id="admin-billing-list" class="empty-state">Fetching billing records…</div>
-                </div>
-            </div>
-
-            <!-- Tickets View -->
-            <div id="view-tickets" class="admin-view">
-                <div class="card">
-                    <div id="admin-tickets-list" class="empty-state">Checking for new requests…</div>
                 </div>
             </div>
 
@@ -178,6 +172,7 @@
                                 <option value="rental-history">Rental History</option>
                                 <option value="screening">Screening Report</option>
                                 <option value="rent-roll">Rent Roll Report</option>
+                                <option value="meter-readings">Meter Readings Report</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -242,7 +237,9 @@
             </div>
             <div class="form-group">
                 <label>Room Number</label>
-                <input type="text" id="reading-room" placeholder="Room No (e.g., 101)" class="full-width">
+                <select id="reading-room" class="full-width">
+                    <option value="">Select Room</option>
+                </select>
             </div>
             <div class="form-group">
                 <label>Reading Date</label>
@@ -296,6 +293,7 @@
                     <option value="50">Last 50</option>
                     <option value="all">All</option>
                 </select>
+                <button onclick="adminApp.clearAllReadings()" class="btn-secondary" style="flex:1; min-width:140px;">🗑 Clear All Readings</button>
             </div>
             <div id="readings-list" class="empty-state">Loading recent readings…</div>
         </div>
@@ -309,10 +307,22 @@
                 <button onclick="adminApp.closeBillModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted);">&times;</button>
             </div>
             <div class="form-grid">
-                <input type="text" id="bill-room" readonly style="background-color: #f5f5f5; cursor: not-allowed; width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; font-size:1rem;">
+                <input type="hidden" id="bill-room">
+                <input type="text" id="bill-tenant-room" readonly style="background-color: #f5f5f5; cursor: not-allowed; width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; font-size:1rem;">
                 <input type="month" id="bill-month" onchange="adminApp.fetchReadings()">
                 <input type="number" id="bill-rental" placeholder="Rental Cost (₱)">
                 <input type="text" id="bill-due" placeholder="Due Date (e.g. Feb 15)">
+            </div>
+
+            <div class="form-grid" style="margin-top: 0.75rem;">
+                <div class="form-group">
+                    <label>Water Rate (₱/m³)</label>
+                    <input type="number" id="bill-water-rate" step="0.01" min="0" oninput="adminApp.updateRatePreview()">
+                </div>
+                <div class="form-group">
+                    <label>Electric Rate (₱/kWh)</label>
+                    <input type="number" id="bill-electric-rate" step="0.01" min="0" oninput="adminApp.updateRatePreview()">
+                </div>
             </div>
             
             <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-color); border-radius: 0.35rem; border: 1px solid var(--border);">
@@ -324,7 +334,7 @@
                     </div>
                     <div>
                         <label style="color: var(--text-muted); font-size: 0.75rem;">Current Reading</label>
-                        <input type="number" id="bill-water-reading" readonly style="background: #fff; border: 1px solid var(--border); padding: 0.4rem; border-radius: 0.25rem; width: 100%; font-weight: 600;">
+                        <input type="number" id="bill-water-reading" oninput="adminApp.updateRatePreview()" style="background: #fff; border: 1px solid var(--border); padding: 0.4rem; border-radius: 0.25rem; width: 100%; font-weight: 600;">
                     </div>
                 </div>
                 <div style="margin-top: 0.5rem; padding: 0.5rem; background: #fff; border-radius: 0.25rem; font-size: 0.8rem;">
@@ -341,7 +351,7 @@
                     </div>
                     <div>
                         <label style="color: var(--text-muted); font-size: 0.75rem;">Current Reading</label>
-                        <input type="number" id="bill-electric-reading" readonly style="background: #fff; border: 1px solid var(--border); padding: 0.4rem; border-radius: 0.25rem; width: 100%; font-weight: 600;">
+                        <input type="number" id="bill-electric-reading" oninput="adminApp.updateRatePreview()" style="background: #fff; border: 1px solid var(--border); padding: 0.4rem; border-radius: 0.25rem; width: 100%; font-weight: 600;">
                     </div>
                 </div>
                 <div style="margin-top: 0.5rem; padding: 0.5rem; background: #fff; border-radius: 0.25rem; font-size: 0.8rem;">
@@ -396,10 +406,15 @@
                 <input type="text" id="edit-bill-room" readonly style="width:48%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; background:#f5f5f5; margin-right:2%;">
                 <input type="text" id="edit-bill-month" readonly style="width:48%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; background:#f5f5f5;">
             </div>
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.25rem;">Rental Amount</label>
             <input type="number" id="edit-bill-rental" placeholder="Rental Amount" style="width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; margin-bottom:0.5rem;">
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.25rem;">Water Amount</label>
             <input type="number" id="edit-bill-water" placeholder="Water Amount" style="width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; margin-bottom:0.5rem;">
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.25rem;">Electric Amount</label>
             <input type="number" id="edit-bill-electric" placeholder="Electric Amount" style="width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; margin-bottom:0.5rem;">
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.25rem;">Due Date</label>
             <input type="text" id="edit-bill-due" placeholder="Due Date" style="width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; margin-bottom:0.5rem;">
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.25rem;">Status</label>
             <select id="edit-bill-status" style="width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; margin-bottom:0.5rem;">
                 <option value="unpaid">Unpaid</option>
                 <option value="paid">Paid</option>
@@ -429,6 +444,7 @@
         </div>
     </div>
 
+    <script src="receipt.js"></script>
     <script src="admin.js"></script>
 </body>
 </html>

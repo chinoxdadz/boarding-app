@@ -18,6 +18,8 @@ const receipt = {
         const electric = Number(bill.electricAmount || bill.electricalAmount || 0).toFixed(2);
         const rental = Number(bill.rentalAmount || 0).toFixed(2);
         
+        const waterConsumption = Number(bill.waterConsumption || 0).toFixed(2);
+        const electricConsumption = Number(bill.electricConsumption || 0).toFixed(2);
         const receiptDate = new Date().toLocaleDateString('en-PH', {
             year: 'numeric',
             month: 'long',
@@ -135,6 +137,12 @@ const receipt = {
         
         .charge-label {
             color: #555;
+        }
+
+        .charge-meta {
+            color: #888;
+            font-size: 11px;
+            margin-left: 6px;
         }
         
         .charge-amount {
@@ -310,11 +318,11 @@ const receipt = {
                     <span class="charge-amount">₱${rental}</span>
                 </div>
                 <div class="charge-row">
-                    <span class="charge-label">Water Usage</span>
+                    <span class="charge-label">Water Usage <span class="charge-meta">(${waterConsumption} m³)</span></span>
                     <span class="charge-amount">₱${water}</span>
                 </div>
                 <div class="charge-row">
-                    <span class="charge-label">Electricity Usage</span>
+                    <span class="charge-label">Electricity Usage <span class="charge-meta">(${electricConsumption} kWh)</span></span>
                     <span class="charge-amount">₱${electric}</span>
                 </div>
                 <div class="charge-row total">
@@ -329,7 +337,7 @@ const receipt = {
             <div class="section-label">Payment Details</div>
             <div class="info-row">
                 <span class="info-label">Payment Method:</span>
-                <span class="info-value">${bill.paymentType === 'cash' ? '💵 Cash' : '💚 GCash'}</span>
+                <span class="info-value">${bill.status === 'paid' ? (bill.paymentType === 'cash' ? '💵 Cash' : bill.paymentType === 'gcash' ? '💚 GCash' : 'Paid') : 'Unpaid'}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Due Date:</span>

@@ -250,6 +250,29 @@ const app = {
         currentFilter: 'all'
     },
 
+    normalizeNotificationTimestamps: (list) => {
+        return (list || []).map(n => ({
+            ...n,
+            timestamp: n?.timestamp ? new Date(n.timestamp) : new Date()
+        }));
+    },
+
+    pruneNotifications: () => {
+        const maxItems = 50;
+        const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
+        const cutoff = Date.now() - maxAgeMs;
+
+        app.notifications.list = app.notifications.list.filter(n => {
+            const ts = n?.timestamp ? new Date(n.timestamp).getTime() : 0;
+            return ts && ts >= cutoff;
+        });
+
+        app.notifications.list.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        if (app.notifications.list.length > maxItems) {
+            app.notifications.list = app.notifications.list.slice(0, maxItems);
+        }
+    },
+
     initNotifications: async () => {
         app.checkForNewNotifications();
         // Check for notifications every 30 seconds
@@ -314,7 +337,8 @@ const app = {
                     app.sendBrowserNotification('📢 New Announcement', Security.sanitizeText(ann.title));
                 }
             });
-            
+
+            app.pruneNotifications();
             localStorage.setItem('bh_last_notification_check', now.toISOString());
             localStorage.setItem('bh_notifications', JSON.stringify(app.notifications.list));
             app.updateNotificationBadge();
@@ -331,7 +355,8 @@ const app = {
         // Load from localStorage first
         const stored = localStorage.getItem('bh_notifications');
         if (stored) {
-            app.notifications.list = JSON.parse(stored);
+            app.notifications.list = app.normalizeNotificationTimestamps(JSON.parse(stored));
+            app.pruneNotifications();
         }
         
         app.filterNotifications(app.notifications.currentFilter);
