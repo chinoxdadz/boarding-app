@@ -51,6 +51,9 @@
                 <a href="#" onclick="adminApp.showView('reports'); return false;" class="nav-link" data-view="reports">
                     <span class="nav-icon">📈</span> Reports
                 </a>
+                <a href="#" onclick="adminApp.showView('audit'); return false;" class="nav-link" data-view="audit">
+                    <span class="nav-icon">🧾</span> Audit Logs
+                </a>
                 <a href="#" onclick="alert('Settings coming soon'); return false;" class="nav-link">
                     <span class="nav-icon">⚙️</span> Settings
                 </a>
@@ -194,6 +197,47 @@
                     <div id="report-output" class="empty-state">Choose a report and click Generate.</div>
                 </div>
             </div>
+
+            <!-- Audit Logs View -->
+            <div id="view-audit" class="admin-view">
+                <div class="card">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Category</label>
+                            <select id="audit-filter-category">
+                                <option value="">All</option>
+                                <option value="tenant">Tenant</option>
+                                <option value="billing">Billing</option>
+                                <option value="payment">Payment</option>
+                                <option value="reading">Meter Reading</option>
+                                <option value="announcement">Announcement</option>
+                                <option value="ticket">Ticket</option>
+                                <option value="system">System</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Room</label>
+                            <input type="text" id="audit-filter-room" placeholder="Room No">
+                        </div>
+                        <div class="form-group">
+                            <label>From</label>
+                            <input type="date" id="audit-filter-from">
+                        </div>
+                        <div class="form-group">
+                            <label>To</label>
+                            <input type="date" id="audit-filter-to">
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                        <input type="text" id="audit-filter-search" placeholder="Search action or notes" style="flex:1; min-width:220px;">
+                        <button onclick="adminApp.applyAuditFilters()" class="btn-primary">Apply Filters</button>
+                        <button onclick="adminApp.resetAuditFilters()" class="btn-secondary">Reset</button>
+                    </div>
+                </div>
+                <div class="card" style="margin-top: 1rem;">
+                    <div id="audit-log-list" class="empty-state">Loading audit logs…</div>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -309,7 +353,10 @@
             <div class="form-grid">
                 <input type="hidden" id="bill-room">
                 <input type="text" id="bill-tenant-room" readonly style="background-color: #f5f5f5; cursor: not-allowed; width:100%; padding:0.8rem; border:1px solid var(--border); border-radius:8px; font-size:1rem;">
-                <input type="month" id="bill-month" onchange="adminApp.fetchReadings()">
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>Billing Month</label>
+                    <input type="month" id="bill-month" onchange="adminApp.fetchReadings()">
+                </div>
                 <input type="number" id="bill-rental" placeholder="Rental Cost (₱)">
                 <input type="text" id="bill-due" placeholder="Due Date (e.g. Feb 15)">
             </div>

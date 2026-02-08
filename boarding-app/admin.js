@@ -339,6 +339,192 @@ const adminApp = {
         summary: {}
     },
 
+    auditCache: [],
+    auditLocalKey: 'bh_audit_logs',
+    auditMaxEntries: 200,
+
+    logAudit: async (category, action, details = {}) => {
+        const payload = {
+            category: category || 'system',
+            action: action || 'event',
+            roomNo: details.roomNo || '',
+            details: details || {},
+            actor: 'admin',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        const localEntry = {
+            category: payload.category,
+            action: payload.action,
+            roomNo: payload.roomNo,
+            details: payload.details,
+            actor: payload.actor,
+            createdAtMs: Date.now()
+        };
+
+        adminApp.persistLocalAudit(localEntry);
+
+        try {
+            await db.collection('audit_logs').add(payload);
+        } catch (e) {
+            console.warn('Audit log write failed:', e);
+        }
+    },
+
+    persistLocalAudit: (entry) => {
+        const existing = adminApp.readLocalAudit();
+        existing.unshift(entry);
+        const trimmed = existing.slice(0, adminApp.auditMaxEntries);
+        localStorage.setItem(adminApp.auditLocalKey, JSON.stringify(trimmed));
+    },
+
+    readLocalAudit: () => {
+        try {
+            const raw = localStorage.getItem(adminApp.auditLocalKey);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            console.warn('Audit cache parse failed:', e);
+            return [];
+        }
+    },
+
+    normalizeAuditEntry: (entry) => {
+        const createdAtMs = entry?.createdAt?.seconds
+            ? entry.createdAt.seconds * 1000
+            : (entry?.createdAtMs || Date.parse(entry?.createdAt) || 0);
+        return {
+            id: entry.id || '',
+            category: entry.category || 'system',
+            action: entry.action || 'event',
+            roomNo: entry.roomNo || '',
+            actor: entry.actor || 'admin',
+            details: entry.details || {},
+            createdAtMs
+        };
+    },
+
+    formatAuditTimestamp: (ms) => {
+        if (!ms) return 'N/A';
+        return new Date(ms).toLocaleString();
+    },
+
+    loadAuditLogs: async () => {
+        const container = document.getElementById('audit-log-list');
+        if (container) container.innerHTML = 'Loading audit logs…';
+
+        const localLogs = adminApp.readLocalAudit().map(adminApp.normalizeAuditEntry);
+        let remoteLogs = [];
+
+        try {
+            const snap = await db.collection('audit_logs')
+                .orderBy('createdAt', 'desc')
+                .limit(200)
+                .get();
+            remoteLogs = snap.docs.map(doc => adminApp.normalizeAuditEntry({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+            console.warn('Load audit logs failed:', e);
+        }
+
+        const combined = [...remoteLogs, ...localLogs];
+        const seen = new Set();
+        const deduped = [];
+        combined.forEach(entry => {
+            const key = `${entry.action}|${entry.category}|${entry.roomNo}|${entry.createdAtMs}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            deduped.push(entry);
+        });
+
+        adminApp.auditCache = deduped.sort((a, b) => b.createdAtMs - a.createdAtMs);
+        adminApp.applyAuditFilters();
+    },
+
+    applyAuditFilters: () => {
+        const category = document.getElementById('audit-filter-category')?.value || '';
+        const room = document.getElementById('audit-filter-room')?.value || '';
+        const from = document.getElementById('audit-filter-from')?.value || '';
+        const to = document.getElementById('audit-filter-to')?.value || '';
+        const search = document.getElementById('audit-filter-search')?.value || '';
+
+        const fromMs = from ? new Date(from).getTime() : null;
+        const toMs = to ? new Date(`${to}T23:59:59`).getTime() : null;
+        const roomKey = room.trim().toLowerCase();
+        const query = search.trim().toLowerCase();
+
+        const filtered = adminApp.auditCache.filter(entry => {
+            if (category && entry.category !== category) return false;
+            if (roomKey && String(entry.roomNo || '').toLowerCase() !== roomKey) return false;
+            if (fromMs && entry.createdAtMs < fromMs) return false;
+            if (toMs && entry.createdAtMs > toMs) return false;
+
+            if (query) {
+                const detailsText = JSON.stringify(entry.details || {}).toLowerCase();
+                const haystack = `${entry.action} ${entry.category} ${entry.roomNo} ${detailsText}`.toLowerCase();
+                if (!haystack.includes(query)) return false;
+            }
+            return true;
+        });
+
+        adminApp.renderAuditLogs(filtered);
+    },
+
+    resetAuditFilters: () => {
+        const inputs = ['audit-filter-category', 'audit-filter-room', 'audit-filter-from', 'audit-filter-to', 'audit-filter-search'];
+        inputs.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (el.tagName === 'SELECT') el.selectedIndex = 0;
+            else el.value = '';
+        });
+        adminApp.applyAuditFilters();
+    },
+
+    renderAuditLogs: (rows) => {
+        const container = document.getElementById('audit-log-list');
+        if (!container) return;
+
+        if (!rows.length) {
+            container.innerHTML = '<p style="text-align:center; color:var(--text-muted);">No audit logs found.</p>';
+            return;
+        }
+
+        const html = rows.map(entry => {
+            const safeAction = (typeof Security !== 'undefined' && Security.sanitizeText)
+                ? Security.sanitizeText(entry.action)
+                : entry.action;
+            const safeCategory = (typeof Security !== 'undefined' && Security.sanitizeText)
+                ? Security.sanitizeText(entry.category)
+                : entry.category;
+            const safeRoom = (typeof Security !== 'undefined' && Security.sanitizeText)
+                ? Security.sanitizeText(entry.roomNo || '')
+                : (entry.roomNo || '');
+            const detailsText = entry.details && Object.keys(entry.details).length
+                ? JSON.stringify(entry.details)
+                : '';
+            const safeDetails = (typeof Security !== 'undefined' && Security.sanitizeText)
+                ? Security.sanitizeText(detailsText)
+                : detailsText;
+
+            return `
+                <div class="audit-log-item">
+                    <div class="audit-log-header">
+                        <div class="audit-log-meta">
+                            <span class="audit-log-badge">${safeCategory}</span>
+                            <span class="audit-log-action">${safeAction}</span>
+                            ${safeRoom ? `<span class="audit-log-room">Room ${safeRoom}</span>` : ''}
+                        </div>
+                        <div class="audit-log-time">${adminApp.formatAuditTimestamp(entry.createdAtMs)}</div>
+                    </div>
+                    ${safeDetails ? `<div class="audit-log-details">${safeDetails}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = `<div class="audit-log-list">${html}</div>`;
+    },
+
     reportTypeBound: false,
 
     bindReportTypeHandler: () => {
@@ -500,7 +686,8 @@ const adminApp = {
             billing: 'Billing',
             tickets: 'Tickets',
             announcements: 'Announcements',
-            reports: 'Reports'
+            reports: 'Reports',
+            audit: 'Audit Logs'
         };
         document.getElementById('page-title').textContent = titles[viewName] || viewName;
 
@@ -510,6 +697,10 @@ const adminApp = {
 
         if (viewName === 'reports') {
             adminApp.loadReports();
+        }
+
+        if (viewName === 'audit') {
+            adminApp.loadAuditLogs();
         }
     },
 
@@ -1017,6 +1208,7 @@ const adminApp = {
                 body: body,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
+            adminApp.logAudit('announcement', 'Posted announcement', { title: title });
             alert("Announcement Posted!");
             adminApp.closeAnnouncementModal();
             adminApp.loadAnnouncements();
@@ -1070,6 +1262,7 @@ const adminApp = {
         if (!confirm('Remove this announcement?')) return;
         try {
             await db.collection('announcements').doc(announcementId).delete();
+            adminApp.logAudit('announcement', 'Deleted announcement', { announcementId: announcementId });
             adminApp.loadAnnouncements();
         } catch (e) {
             alert('Error deleting announcement: ' + e.message);
@@ -1337,6 +1530,13 @@ const adminApp = {
                 dueDate: due,
                 status: "unpaid"
             });
+            adminApp.logAudit('billing', 'Created bill', {
+                roomNo: room,
+                month: month,
+                totalAmount: total,
+                waterReading: currentWaterReading,
+                electricReading: currentElectricReading
+            });
 
             adminApp.cacheRatesForMonth(month, rates.waterRate, rates.electricRate);
 
@@ -1542,6 +1742,12 @@ const adminApp = {
         
         try {
             await db.collection('soas').doc(billId).update({ status: newStatus });
+            adminApp.logAudit('billing', 'Updated bill status (tenant view)', {
+                roomNo: roomNo,
+                billId: billId,
+                status: newStatus,
+                tenantName: tenantName
+            });
             adminApp.viewTenantBills(roomNo, tenantName); // Refresh the tenant's bills
             adminApp.loadBilling(); // Also refresh the main billing list
         } catch(e) { 
@@ -1595,6 +1801,8 @@ const adminApp = {
                 phone: phone || '',
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
+
+            adminApp.logAudit('tenant', 'Added tenant', { roomNo: roomNo, name: name });
 
             alert(`Tenant ${name} added to Room ${roomNo}!`);
             
@@ -1677,6 +1885,7 @@ const adminApp = {
                 phone: phone || ''
             });
 
+            adminApp.logAudit('tenant', 'Updated tenant', { roomNo: roomNo, name: name, tenantId: id });
             alert(`Tenant ${name} updated successfully!`);
             adminApp.closeEditTenantModal();
             adminApp.loadTenants();
@@ -1692,6 +1901,7 @@ const adminApp = {
         
         try {
             await db.collection('tenants').doc(tenantId).delete();
+            adminApp.logAudit('tenant', 'Removed tenant', { roomNo: roomNo, tenantId: tenantId });
             alert(`Tenant removed from Room ${roomNo}`);
             adminApp.loadTenants();
         } catch (e) {
@@ -1882,6 +2092,7 @@ const adminApp = {
         
         try {
             await db.collection('soas').doc(billId).update({ status: newStatus });
+            adminApp.logAudit('billing', 'Updated bill status', { billId: billId, status: newStatus });
             adminApp.loadBilling(); // Refresh the list
         } catch(e) { 
             alert('Error updating status: ' + e.message); 
@@ -1910,6 +2121,7 @@ const adminApp = {
                 status: 'paid',
                 paymentType: paymentType
             });
+            adminApp.logAudit('payment', 'Recorded payment', { billId: billId, paymentType: paymentType, status: 'paid' });
             adminApp.closePaymentTypeModal();
             adminApp.loadBilling(); // Refresh the list
             alert('Bill marked as paid! E-receipt is ready for download.');
@@ -1957,6 +2169,14 @@ const adminApp = {
                 status: status
             });
 
+            adminApp.logAudit('billing', 'Updated bill amounts', {
+                billId: id,
+                rentalAmount: rental,
+                waterAmount: water,
+                electricAmount: electric,
+                totalAmount: total,
+                status: status
+            });
             alert('Bill updated successfully!');
             adminApp.closeEditBillModal();
             adminApp.loadBilling();
@@ -1972,6 +2192,7 @@ const adminApp = {
         
         try {
             await db.collection('soas').doc(billId).delete();
+            adminApp.logAudit('billing', 'Deleted bill', { billId: billId, roomNo: roomNo, month: month });
             alert('Bill deleted successfully!');
             adminApp.loadBilling();
         } catch (e) {
@@ -2241,6 +2462,7 @@ const adminApp = {
 
             adminApp.allReadings = null;
             if (container) container.innerHTML = 'No readings yet. Add the first one above.';
+            adminApp.logAudit('reading', 'Cleared all meter readings', { totalDeleted: totalDeleted });
             alert(`Deleted ${totalDeleted} meter readings.`);
         } catch (e) {
             console.error(e);
@@ -2278,6 +2500,12 @@ const adminApp = {
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
 
+            adminApp.logAudit('reading', 'Added meter reading', {
+                roomNo: roomNo,
+                readingDate: readingDate,
+                waterReading: waterReading,
+                electricReading: electricReading
+            });
             alert(`Reading saved for Room ${roomNo} on ${readingDate}!`);
             adminApp.closeAddReadingModal();
             // Reload readings if modal is open
@@ -2297,6 +2525,7 @@ const adminApp = {
         if(!confirm("Mark this issue as fixed?")) return;
         try {
             await db.collection('tickets').doc(id).update({ status: 'resolved' });
+            adminApp.logAudit('ticket', 'Resolved ticket', { ticketId: id });
             adminApp.loadTickets(); // Refresh the list
         } catch(e) { alert("Error: " + e.message); }
     },
@@ -2306,6 +2535,7 @@ const adminApp = {
         if(!confirm("Permanently delete this ticket?")) return;
         try {
             await db.collection('tickets').doc(id).delete();
+            adminApp.logAudit('ticket', 'Deleted ticket', { ticketId: id });
             adminApp.loadTickets(); // Refresh the list
         } catch(e) { alert("Error: " + e.message); }
     },
@@ -2355,6 +2585,12 @@ const adminApp = {
                 electricReading: electricReading,
                 readingDate: readingDate, // Stored as string in YYYY-MM-DD format
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            adminApp.logAudit('reading', 'Added meter reading', {
+                roomNo: roomNo,
+                readingDate: readingDate,
+                waterReading: waterReading,
+                electricReading: electricReading
             });
             alert(`Reading saved for Room ${roomNo} on ${readingDate}!`);
             // Clear the row inputs
